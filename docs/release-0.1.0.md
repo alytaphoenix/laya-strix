@@ -70,11 +70,12 @@ the same tools.  See [`docs/training.md`](training.md).
 
 - English checkpoint only in the shipped service; the router refuses to build
   a torch multilingual checkpoint behind the NPU process.
-- One NPU row per forward, padded to 512 tokens; no short-length/batched
+- One NPU row per forward, padded to 256 tokens; no short-length/batched
   profiles yet.
 - The decision head runs on the CPU.
-- Training defaults to CPU; ROCm training is opt-in and refuses while
-  llama-swap has a model resident.
+- Training defaults to CPU; the ROCm 7.0 torch wheel is experimental on this
+  box's ROCm 10/gfx1151 stack (the wrapper probes and refuses/falls back), and
+  the CUDA path refuses while llama-swap has a model resident.
 - The service has no TLS; use an SSH tunnel or a reverse proxy off-host.
 
 ## Artifacts

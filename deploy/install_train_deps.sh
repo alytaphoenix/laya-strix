@@ -41,9 +41,26 @@ import torch
 print("torch", torch.__version__)
 print("hip", getattr(torch.version, "hip", None))
 print("cuda_available", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("device", torch.cuda.get_device_name(0))
 PY
+
+if [ "$ROCM" = "1" ]; then
+  # The ROCm 7.0 wheel can report a device and then segfault on the first
+  # kernel against a newer ROCm/gfx1151 stack.  Probe in a child process.
+  python - <<'PY'
+import subprocess, sys
+code = ("import torch\n"
+        "x = torch.randn(16, 16, device='cuda')\n"
+        "y = x @ x\n"
+        "torch.cuda.synchronize()\n"
+        "print('ok', float(y[0, 0]))\n")
+p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+print("gpu probe rc", p.returncode)
+print((p.stdout or p.stderr).strip()[-400:])
+if p.returncode != 0:
+    print("\nWARNING: this ROCm wheel cannot run a kernel on this box.")
+    print("Use the CPU training venv (bash deploy/install_train_deps.sh) for now.")
+PY
+fi
 
 echo
 echo "Training venv ready: $VENV"

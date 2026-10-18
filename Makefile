@@ -20,22 +20,22 @@ help:
 
 export:
 	$(PYTHON) tools/export_split_static.py --model english \
-		--out artifacts/onnx/english_split --seq-len 512 --markers 8 --opset 17
+		--out artifacts/onnx/english_split_256 --seq-len 256 --markers 8 --opset 17
 
 simplify:
 	$(PYTHON) tools/simplify_graph.py \
-		--model artifacts/onnx/english_split/encoder.onnx \
-		--out artifacts/onnx/english_split/encoder_sim.onnx \
-		--verify artifacts/onnx/english_split/fixtures.npz
+		--model artifacts/onnx/english_split_256/encoder.onnx \
+		--out artifacts/onnx/english_split_256/encoder_sim.onnx \
+		--verify artifacts/onnx/english_split_256/fixtures.npz
 
 mask:
 	$(PYTHON) tools/rewrite_mask.py \
-		--model artifacts/onnx/english_split/encoder_sim.onnx \
-		--out artifacts/onnx/english_split/encoder_sim_nomask.onnx \
-		--verify artifacts/onnx/english_split/fixtures.npz
+		--model artifacts/onnx/english_split_256/encoder_sim.onnx \
+		--out artifacts/onnx/english_split_256/encoder_sim_nomask.onnx \
+		--verify artifacts/onnx/english_split_256/fixtures.npz
 
 audit:
-	$(PYTHON) tools/audit_graph.py artifacts/onnx/english_split/encoder_sim_nomask.onnx
+	$(PYTHON) tools/audit_graph.py artifacts/onnx/english_split_256/encoder_sim_nomask.onnx
 
 compile-remote:
 	ssh $(REMOTE) 'cd ~/$(REMOTE_DIR) && bash deploy/compile_encoder.sh'

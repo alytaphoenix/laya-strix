@@ -42,9 +42,9 @@ See `training/data/` and Laya's `docs/finetune.md`.
 
 | Device | Use |
 |---|---|
-| `cpu` | Default; no iGPU contention; slow for full fine-tunes |
-| `cuda` (ROCm) | gfx1151 iGPU; stop gufo first or pass `--allow-gpu-contention` after measuring |
-| `auto` | Picks CUDA if the current venv's torch sees it, otherwise CPU |
+| `cpu` | Default and currently the supported path; no iGPU contention |
+| `cuda` (ROCm) | Experimental; the PyTorch ROCm 7.0 wheel segfaults on this ROCm 10/gfx1151 stack (probed in a child; refuses/falls back) |
+| `auto` | Picks CUDA if the current venv's torch sees a working device, otherwise CPU |
 
 The wrapper's contention check is `GET http://127.0.0.1:8732/v1/models`; any
 model not `unloaded`/`idle` blocks a CUDA run unless overridden.
@@ -56,13 +56,13 @@ pipeline applies:
 
 ```bash
 python tools/export_split_static.py --model artifacts/training/my-run \
-  --out artifacts/onnx/my-run --seq-len 512 --markers 8
+  --out artifacts/onnx/my-run --seq-len 256 --markers 8
 python tools/simplify_graph.py --model artifacts/onnx/my-run/encoder.onnx \
   --out artifacts/onnx/my-run/encoder_sim.onnx --verify artifacts/onnx/my-run/fixtures.npz
 python tools/rewrite_mask.py --model artifacts/onnx/my-run/encoder_sim.onnx \
   --out artifacts/onnx/my-run/encoder_sim_nomask.onnx --verify artifacts/onnx/my-run/fixtures.npz
 python tools/compile_ep_context.py --model artifacts/onnx/my-run/encoder_sim_nomask.onnx \
-  --out artifacts/ep/my-run_b1_l512_m8.onnx
+  --out artifacts/ep/my-run_b1_l256_m8.onnx
 ```
 
 Then update `LAYA_MODEL_DIR` / `LAYA_ENCODER` / `LAYA_HEAD` in

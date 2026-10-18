@@ -7,14 +7,21 @@ AMD's VitisAI `onnxruntime`; the training venv gets a normal PyTorch build.
 ## Install
 
 ```bash
-# CPU (safe default; no iGPU contention)
+# CPU (supported; no iGPU contention)
 bash deploy/install_train_deps.sh
 
-# ROCm iGPU (gfx1151; PyTorch ROCm 7.0 wheel)
+# Experimental ROCm iGPU (gfx1151; PyTorch ROCm 7.0 wheel)
 bash deploy/install_train_deps.sh --rocm
 ```
 
 The venv is `~/laya-train-venv` by default (`LAYA_TRAIN_VENV` overrides it).
+
+> **ROCm note (2026-10-18).** The `torch 2.10.0+rocm7.0` wheel reports
+> `gfx1151` but segfaults on the first kernel against this box's ROCm 10
+> stack. `install_train_deps.sh --rocm` probes it in a child process and warns;
+> `laya-npu train` does the same and refuses `--device cuda` (or falls back to
+> CPU under `--device auto`).  CPU training is the supported path until a
+> torch build matches the installed ROCm.
 
 ## Quick smoke run
 
@@ -103,7 +110,7 @@ export/compile path works:
 python tools/export_split_static.py \
   --model artifacts/training/my-run \
   --out artifacts/onnx/my-run \
-  --seq-len 512 --markers 8
+  --seq-len 256 --markers 8
 
 python tools/simplify_graph.py \
   --model artifacts/onnx/my-run/encoder.onnx \
@@ -117,7 +124,7 @@ python tools/rewrite_mask.py \
 
 python tools/compile_ep_context.py \
   --model artifacts/onnx/my-run/encoder_sim_nomask.onnx \
-  --out artifacts/ep/my-run_b1_l512_m8.onnx
+  --out artifacts/ep/my-run_b1_l256_m8.onnx
 ```
 
 Then point `LAYA_MODEL_DIR`/`LAYA_ENCODER`/`LAYA_HEAD` at the new artifacts.

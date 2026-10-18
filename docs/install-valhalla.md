@@ -80,7 +80,7 @@ bash deploy/compile_encoder.sh
 ```
 
 This runs the simplify and mask-rewrite steps if needed, then compiles
-`encoder_sim_nomask.onnx` to `artifacts/ep/english_b1_l512_m8.onnx` and writes
+`encoder_sim_nomask.onnx` to `artifacts/ep/english_b1_l256_m8.onnx` and writes
 the operator-assignment report to `artifacts/ep-cache/`.  The compile is
 one-time and can take minutes.
 
@@ -94,6 +94,27 @@ for r in d.get("deviceStat", []):
     print(r.get("name"), r.get("nodeNum"))
 PY
 ```
+
+The default is the **256-token** profile.  The 512-token profile reaches the
+AIE backend but fails the scheduler with
+`Auto-phase failed to find solution to meet hardware resources constraint at
+layer 32`; it needs the encoder split into compiled subgraphs or a compiler
+configuration that reduces layer-32 buffer pressure.  That is a follow-up, not
+a v0.1.0 blocker.
+
+If you regenerate the 256 artifacts:
+
+```bash
+python tools/export_split_static.py --model english \
+  --out artifacts/onnx/english_split_256 --seq-len 256 --markers 8 --opset 17
+MODEL_DIR=$PWD/artifacts/onnx/english_split_256 SEQ_LEN=256 bash deploy/compile_encoder.sh
+```
+
+Use `LAYA_SEQ_LEN=256`, `LAYA_MODEL_DIR=...english_split_256`,
+`LAYA_ENCODER=.../english_b1_l256_m8.onnx`,
+`LAYA_HEAD=...english_split_256/head.onnx`, and
+`LAYA_EP_CACHE_KEY=english_b1_l256_m8`.  The service truncates states at the
+compiled length and reports `usage.truncated` accordingly.
 
 ## 5. Run the service
 

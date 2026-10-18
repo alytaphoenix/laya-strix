@@ -37,7 +37,7 @@ keeps tokenization, the head, and the calibration/answer math.
 ## Graph build pipeline
 
 ```
-export_split_static.py  -> encoder.onnx + head.onnx (opset 17, B=1, L=512, M=8)
+export_split_static.py  -> encoder.onnx + head.onnx (opset 17, B=1, L=256, M=8)
 simplify_graph.py       -> onnxsim folds shape/rotary arithmetic (3667 -> 1280 nodes)
 rewrite_mask.py         -> mask GatherND becomes an Unsqueeze (1279 nodes)
 compile_ep_context.py   -> BF16 VitisAI EP context + operator-assignment report
@@ -49,11 +49,15 @@ the compile report is the authority).
 
 ## Shapes and padding
 
-The compiled encoder is static: one row, 512 tokens, 8 marker slots.  The
-session pads each request row to the profile with the tokenizer pad id, zeros
-the attention mask for the tail, pads marker metadata with `marker_mask=false`,
-and slices logits back to the request's marker count.  `LAYA_SEQ_LEN` /
-`LAYA_MARKERS` must match the compiled artifact.
+The compiled encoder is static: one row, **256 tokens** in the v0.1.0 profile,
+8 marker slots.  (The 512-token build reaches the AIE backend but the
+scheduler cannot fit layer 32; splitting the encoder or changing the compiler
+configuration is a follow-up.)  The session pads each request row to the
+profile with the tokenizer pad id, zeros the attention mask for the tail, pads
+marker metadata with `marker_mask=false`, and slices logits back to the
+request's marker count.  `LAYA_SEQ_LEN` / `LAYA_MARKERS` must match the
+compiled artifact, and `agent.cfg["max_len"]` is pinned to `LAYA_SEQ_LEN` so
+`usage.truncated` is honest.
 
 A request with N questions becomes N rows; the session runs them one at a time
 (`LAYA_BATCH=1`).  Short-length and batched profiles are the next performance

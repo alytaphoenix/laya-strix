@@ -51,6 +51,29 @@ def _git_revision(repo: Path) -> str | None:
         return None
 
 
+def _probe_cuda(env: dict) -> tuple[bool, str]:
+    """Run a tiny GPU op in a child process.
+
+    A ROCm wheel can report ``torch.cuda.is_available() == True`` and then
+    segfault on the first real kernel (the ROCm 7.0 wheel against this box's
+    ROCm 10/gfx1151 is one example).  A child process keeps that crash out of
+    the training wrapper.
+    """
+    code = (
+        "import torch\n"
+        "x = torch.randn(16, 16, device='cuda')\n"
+        "y = x @ x\n"
+        "torch.cuda.synchronize()\n"
+        "print('ok', float(y[0, 0]))\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], env=env,
+                          capture_output=True, text=True)
+    if proc.returncode == 0:
+        return True, proc.stdout.strip()
+    tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-3:]
+    return False, "rc=%d %s" % (proc.returncode, " | ".join(tail))
+
+
 def _loaded_models(url: str = "http://127.0.0.1:8732/v1/models") -> list[str]:
     try:
         with urllib.request.urlopen(url, timeout=2) as r:
@@ -109,15 +132,21 @@ def run_training(argv=None) -> int:
         out = Path(args.run_root or (repo / "artifacts" / "training")) / f"{stamp}-dry-run"
 
     # Device guard: never take the iGPU while a big model is resident.
+    was_auto = args.device == "auto"
     if args.device in ("cuda", "auto"):
         import torch
 
-        if not torch.cuda.is_available():
+        if torch.cuda.is_available():
+            args.device = "cuda"
+        elif was_auto:
+            args.device = "cpu"
+        else:
             print(
-                "laya-npu train: --device %s requested, but torch reports no CUDA/ROCm "
+                "laya-npu train: --device cuda requested, but torch reports no CUDA/ROCm "
                 "device.  Install the ROCm training venv (deploy/install_train_deps.sh --rocm) "
-                "or use --device cpu." % args.device, file=sys.stderr)
+                "or use --device cpu.", file=sys.stderr)
             return 2
+    if args.device == "cuda":
         loaded = _loaded_models()
         if loaded and not args.allow_gpu_contention:
             print(
@@ -135,6 +164,20 @@ def run_training(argv=None) -> int:
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
     if os.environ.get("LAYA_HSA_OVERRIDE"):
         env.setdefault("HSA_OVERRIDE_GFX_VERSION", os.environ["LAYA_HSA_OVERRIDE"])
+
+    if args.device == "cuda":
+        ok, detail = _probe_cuda(env)
+        if not ok:
+            if was_auto:
+                print("laya-npu train: GPU probe failed (%s); falling back to cpu" % detail,
+                      file=sys.stderr)
+                args.device = "cpu"
+            else:
+                print(
+                    "laya-npu train: the ROCm GPU probe failed (%s).  The wheel reports a "
+                    "device but cannot run a kernel; use --device cpu, or install a torch "
+                    "build that matches this ROCm/gfx1151 stack." % detail, file=sys.stderr)
+                return 2
 
     train_argv = ["--data", str(args.data), "--device", args.device]
     if out is not None:

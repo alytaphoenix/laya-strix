@@ -22,8 +22,8 @@ ROCm `gfx1151`; Laya keeps the NPU busy and leaves the iGPU to that engine.
 - [x] XRT 2.25.37 + amdxdna 2.25 installed; `xrt-smi examine` sees the NPU
       (firmware 1.1.2.65, `aie2p`, 6x8).
 - [x] Static **split** ONNX export: encoder + head, opset 17, batch 1,
-      sequence 512, 8 marker slots.  Parity against PyTorch: max
-      `|dlogits| = 3.3e-05`.
+      sequence 256 (v0.1.0; 512 needs an encoder split/compiler change),
+      8 marker slots.  Parity against PyTorch: max `|dlogits| = 3.3e-05`.
 - [x] Encoder simplified with `onnxsim`: 3667 -> 1280 nodes, all
       `Range`/`CastLike`/`Cos`/`Sin` folded, hidden-state parity 0.
 - [x] Mask rewrite: the last `GatherND` (a mask `[0,i]` gather) becomes an
@@ -63,7 +63,7 @@ uv venv .venv --python 3.12
 uv pip install -e '.[export,dev]'
 
 python tools/export_split_static.py --model english \
-  --out artifacts/onnx/english_split --seq-len 512 --markers 8 --opset 17
+  --out artifacts/onnx/english_split_256 --seq-len 256 --markers 8 --opset 17
 
 LAYA_MODEL_DIR=$PWD/artifacts/onnx/english_split \
 LAYA_PROVIDER=CPUExecutionProvider \
@@ -133,7 +133,7 @@ FORSETI_LAYA_URL=http://127.0.0.1:8753 scripts/laya-eval.sh
 
    python tools/compile_ep_context.py \
      --model artifacts/onnx/english_split/encoder_sim_nomask.onnx \
-     --out artifacts/ep/english_b1_l512_m8.onnx \
+     --out artifacts/ep/english_b1_l256_m8.onnx \
      --config deploy/vai_ep_config.json
    ```
 
@@ -187,6 +187,11 @@ CPU (so it cannot evict gufo), and refuses `--device cuda` while llama-swap
 reports a loaded model.  See [`training/README.md`](training/README.md) and
 [`docs/training.md`](docs/training.md).
 
+> **ROCm note.** The PyTorch `2.10.0+rocm7.0` wheel reports gfx1151 but
+> segfaults on the first kernel against this box's ROCm 10 stack.  CPU
+> training is the supported path; the wrapper probes the GPU in a child
+> process and refuses or falls back instead of crashing mid-run.
+
 ## Documentation
 
 - [`docs/architecture.md`](docs/architecture.md) — split encoder/head, graph
@@ -211,9 +216,9 @@ exporter and retains that provenance.  See [`NOTICE`](NOTICE).
 - English checkpoint only.  The Router will still try to route non-English
   text to `multilingual`; attach a compiled multilingual agent before enabling
   that traffic.
-- One NPU row at a time (`LAYA_BATCH=1`), padded to 512 tokens.  Add compiled
+- One NPU row at a time (`LAYA_BATCH=1`), padded to 256 tokens.  Add compiled
   `B=2/4` and shorter `L` profiles after the first latency measurement.
-- The head runs on CPU.  On this M4 it costs ~20 ms per 512-token row; the
+- The head runs on CPU.  On this M4 it costs ~20 ms per 256-token row; the
   NPU encoder is the remaining cost.  If the head dominates, the next step is
   to remove its `TopK`/sequence ops and compile it for the NPU too.
 - `laya-npu` reuses `laya.serve`, so the Jev contract, auth, admission limits

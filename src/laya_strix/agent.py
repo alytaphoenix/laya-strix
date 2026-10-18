@@ -47,6 +47,10 @@ def build_agent(model_dir: Path, session, *, calibration: str | None = None):
 
     agent.session = session
     agent.npu_session = session
+    # The compiled profile is the real state budget.  Without this the tokenizer
+    # would build 512-token rows and the session would silently slice them to
+    # the compiled length, so `usage.truncated` would lie.
+    agent.cfg["max_len"] = session.settings.seq_len
     agent.backend = "vitisai" if "VitisAIExecutionProvider" in session.get_providers() else "cpu"
     agent.device = "npu" if agent.backend == "vitisai" else "cpu"
     agent.cpu_fallback_count = 0

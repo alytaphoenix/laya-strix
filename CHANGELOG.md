@@ -33,3 +33,8 @@ First release of the Laya-on-XDNA2 deployment.
 - The decision head runs on the CPU (~ms to ~20 ms per 512-token row).
 - Training and inference share the box; the default training device is CPU and
   the ROCm path refuses while llama-swap has a model resident.
+- The PyTorch `2.10.0+rocm7.0` wheel does not run on this box's ROCm 10 /
+  gfx1151 stack (availability is reported, the first kernel segfaults).  CPU
+  training is the supported path until a matching torch build is available;
+  the wrapper probes in a child process and fails over/refuses instead of
+  crashing mid-run.

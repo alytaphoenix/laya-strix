@@ -51,7 +51,7 @@ one-hour soak.
 | Measurement | Result |
 |---|---|
 | CPU reference, Forseti 9-probe | 9/9 (M4 CPU, 512-token profile) |
-| NPU encoder, single row, 512 tokens | TBD |
+| NPU encoder, single row, 256 tokens | TBD |
 | NPU service, four-question triage | TBD |
 | NPU encoder coverage | preliminary: 1265/1268 ops, 99.999% GOPs, 2 subgraphs |
 | Jev parity vs CPU | TBD (max |dp|, argmax changes) |
@@ -61,10 +61,16 @@ one-hour soak.
 
 ## Notes
 
+- The 512-token profile reached the AIE backend but failed the scheduler with
+  `Auto-phase failed ... hardware resources constraint at layer 32`.  The
+  256-token profile is the v0.1.0 service profile: same 1265/1268 operator
+  coverage, half the GOPs, and enough buffer headroom.  A 512 profile needs
+  the encoder split into subgraphs or a compiler configuration that reduces
+  layer-32 pressure.
 - The head runs on CPU in v0.1.  Its latency is reported separately by
   `/npu/health` and `tools/bench.py`; if it dominates, the next step is
   removing the head's `TopK`/sequence ops and compiling it for the NPU too.
-- The current encoder profile is `B=1, L=512, M=8`; short-length buckets and
+- The v0.1.0 encoder profile is `B=1, L=256, M=8`; short-length buckets and
   batched profiles are expected to reduce padding and improve throughput.
 - The CPU reference is not a performance target; it is the correctness
   reference for probabilities and argmax.
