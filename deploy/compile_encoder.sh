@@ -7,6 +7,7 @@ REPO="${LAYA_STRIX_ROOT:-$HOME/laya-strix}"
 VENV="${RYZEN_AI_VENV:-$HOME/ryzenai_1_8/venv}"
 SRC="$REPO/artifacts/onnx/english_split/encoder.onnx"
 SIM="$REPO/artifacts/onnx/english_split/encoder_sim.onnx"
+NOMASK="$REPO/artifacts/onnx/english_split/encoder_sim_nomask.onnx"
 OUT="$REPO/artifacts/ep/english_b1_l512_m8.onnx"
 
 source /opt/xilinx/xrt/setup.sh
@@ -20,10 +21,16 @@ if [ ! -f "$SIM" ]; then
     --model "$SRC" --out "$SIM" \
     --verify "$REPO/artifacts/onnx/english_split/fixtures.npz"
 fi
+if [ ! -f "$NOMASK" ]; then
+  echo "== replacing mask GatherND =="
+  python tools/rewrite_mask.py \
+    --model "$SIM" --out "$NOMASK" \
+    --verify "$REPO/artifacts/onnx/english_split/fixtures.npz"
+fi
 
 echo "== compiling BF16 EP context =="
 python tools/compile_ep_context.py \
-  --model "$SIM" \
+  --model "$NOMASK" \
   --out "$OUT" \
   --config "$REPO/deploy/vai_ep_config.json" \
   --cache-dir "$REPO/artifacts/ep-cache" \
