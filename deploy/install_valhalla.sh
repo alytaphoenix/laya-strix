@@ -86,6 +86,9 @@ if "VitisAIExecutionProvider" not in providers:
     raise SystemExit("VitisAIExecutionProvider missing")
 PY
 
+echo "== laya-strix server package =="
+bash "$REPO/deploy/install_server_deps.sh" "$VENV"
+
 echo
 echo "Done.  Next:"
 echo "  source /opt/xilinx/xrt/setup.sh"
