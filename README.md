@@ -222,6 +222,8 @@ reports a loaded model.  See [`training/README.md`](training/README.md) and
   to an NPU artifact.
 - [`docs/benchmarks.md`](docs/benchmarks.md) — methodology and measured
   numbers.
+- [`docs/release-0.1.0.md`](docs/release-0.1.0.md) — release notes,
+  validation table and artifacts.
 
 ## License
 
