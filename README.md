@@ -24,6 +24,10 @@ ROCm `gfx1151`; Laya keeps the NPU busy and leaves the iGPU to that engine.
 - [x] Static **split** ONNX export: encoder + head, opset 17, batch 1,
       sequence 512, 8 marker slots.  Parity against PyTorch: max
       `|dlogits| = 3.3e-05`.
+- [x] Encoder simplified with `onnxsim`: 3667 -> 1280 nodes, all
+      `Range`/`CastLike`/`Cos`/`Sin` folded, hidden-state parity 0.  The only
+      non-BF16-table ops left are 57 `LayerNormalization`, 28 `Softmax` and
+      one `GatherND` (the mask expander).
 - [x] CPU end-to-end Jev server (`/v1/systemone`, `/batch`, `/health`,
       `/metrics`, `/npu/health`).  Forseti's 9-probe gate passes 9/9.
 - [ ] Ryzen AI 1.8 runtime.  Blocked on AMD's EULA package
@@ -109,8 +113,13 @@ FORSETI_LAYA_URL=http://127.0.0.1:8753 scripts/laya-eval.sh
    source /opt/xilinx/xrt/setup.sh
    source ~/ryzenai_1_8/venv/bin/activate
    source deploy/valhalla.env
-   python tools/compile_ep_context.py \
+   python tools/simplify_graph.py \
      --model artifacts/onnx/english_split/encoder.onnx \
+     --out artifacts/onnx/english_split/encoder_sim.onnx \
+     --verify artifacts/onnx/english_split/fixtures.npz
+
+   python tools/compile_ep_context.py \
+     --model artifacts/onnx/english_split/encoder_sim.onnx \
      --out artifacts/ep/english_b1_l512_m8.onnx \
      --config deploy/vai_ep_config.json
    ```
