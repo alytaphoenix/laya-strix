@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+artifacts/
+models/
+*.onnx
+*.onnx.data
+*.ep.context
+*.execstack.bak
+.DS_Store
+deploy/laya-npu.env
