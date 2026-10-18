@@ -24,10 +24,18 @@ def build_app(settings: Settings | None = None, *, calibration: str | None = Non
     from laya import Router
     from laya.serve import create_app
 
+    class _AttachedOnlyRouter(Router):
+        """Refuse to build a torch checkpoint behind the NPU service's back."""
+
+        def _build(self, key: str):
+            raise ValueError(
+                "laya-npu serves the attached checkpoint(s) only; %r is not attached. "
+                "Compile and attach it before enabling that traffic." % key)
+
     session = SplitSession(settings)
     agent = build_agent(settings.model_dir, session, calibration=calibration)
 
-    router = Router(default="english", max_loaded=1, preload=False)
+    router = _AttachedOnlyRouter(default="english", max_loaded=1, preload=False)
     router.attach("english", agent)
     app = create_app(router)
 
