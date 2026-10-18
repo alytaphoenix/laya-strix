@@ -1,6 +1,9 @@
 REMOTE ?= llm_server
 REMOTE_DIR ?= laya-strix
 PYTHON ?= .venv/bin/python
+PORT ?= 8753
+REFERENCE ?= http://127.0.0.1:8756
+CANDIDATE ?= http://127.0.0.1:8754
 
 .PHONY: help export simplify mask audit compile-remote serve bench parity train-cpu train-help dist clean
 
@@ -11,9 +14,9 @@ help:
 	@echo "  mask           replace the mask GatherND"
 	@echo "  audit          print the encoder operator inventory"
 	@echo "  compile-remote compile the BF16 EP context on $(REMOTE)"
-	@echo "  serve          run the Jev service locally (CPU unless configured)"
-	@echo "  bench          latency probe against http://127.0.0.1:8751"
-	@echo "  parity         compare two Jev endpoints on Forseti's probes"
+	@echo "  serve          run the Jev service locally on :$(PORT)"
+	@echo "  bench          latency probe against the local :$(PORT)"
+	@echo "  parity         compare $(REFERENCE) and $(CANDIDATE) (tunnel)"
 	@echo "  train-cpu      one-epoch frozen-encoder smoke run"
 	@echo "  train-help     laya-npu train options"
 	@echo "  dist           build the 0.1.0 wheel and sdist"
@@ -38,17 +41,17 @@ audit:
 	$(PYTHON) tools/audit_graph.py artifacts/onnx/english_split_256/encoder_sim_nomask.onnx
 
 compile-remote:
-	ssh $(REMOTE) 'cd ~/$(REMOTE_DIR) && bash deploy/compile_encoder.sh'
+	ssh $(REMOTE) 'cd ~/$(REMOTE_DIR) && bash deploy/compile_final.sh'
 
 serve:
-	$(PYTHON) -m laya_strix.cli serve --host 127.0.0.1 --port 8751
+	$(PYTHON) -m laya_strix.cli serve --host 127.0.0.1 --port $(PORT)
 
 bench:
-	$(PYTHON) tools/bench.py --url http://127.0.0.1:8751 --requests 20
+	$(PYTHON) tools/bench.py --url http://127.0.0.1:$(PORT) --requests 20
 
 parity:
-	$(PYTHON) tools/parity.py --reference http://127.0.0.1:8753 \
-		--candidate http://127.0.0.1:8751 \
+	$(PYTHON) tools/parity.py --reference $(REFERENCE) \
+		--candidate $(CANDIDATE) \
 		--probes ../forseti/crew/eval/laya-probe.jsonl
 
 train-cpu:

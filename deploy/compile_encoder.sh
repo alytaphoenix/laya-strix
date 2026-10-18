@@ -10,8 +10,8 @@ MODEL_DIR="${MODEL_DIR:-$REPO/artifacts/onnx/english_split_256}"
 SRC="$MODEL_DIR/encoder.onnx"
 SIM="$MODEL_DIR/encoder_sim.onnx"
 NOMASK="$MODEL_DIR/encoder_sim_nomask.onnx"
-OUT="$REPO/artifacts/ep/english_b1_l${SEQ_LEN}_m8.onnx"
-CACHE_KEY="english_b1_l${SEQ_LEN}_m8"
+OUT="${OUT:-$REPO/artifacts/ep/english_b1_l${SEQ_LEN}_m8.onnx}"
+CACHE_KEY="${CACHE_KEY:-english_b1_l${SEQ_LEN}_m8}"
 
 source /opt/xilinx/xrt/setup.sh
 source "$VENV/bin/activate"

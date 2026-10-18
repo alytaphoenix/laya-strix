@@ -167,18 +167,22 @@ class EncoderWrapper:
 
 
 class HeadWrapper:
-    def __new__(cls, model):
+    def __new__(cls, model, final_norm=None):
         import torch
 
         class _Head(torch.nn.Module):
-            def __init__(self, model):
+            def __init__(self, model, final_norm=None):
                 super().__init__()
                 self.model = model
+                self.final_norm = final_norm
 
             def forward(self, hidden_states, attention_mask, marker_pos,
                         marker_mask, qtype):
                 m = self.model
-                h = hidden_states + m.type_emb(qtype)[:, None, :]
+                h = hidden_states
+                if self.final_norm is not None:
+                    h = self.final_norm(h)
+                h = h + m.type_emb(qtype)[:, None, :]
                 pad = ~attention_mask.bool()
                 for layer in m.head.layers:
                     h = layer(h, src_key_padding_mask=pad)
@@ -197,7 +201,7 @@ class HeadWrapper:
                 act_input = act_input.to(m.act_head[0].weight.dtype)
                 return logits, m.act_head(act_input)
 
-        return _Head(model)
+        return _Head(model, final_norm)
 
 
 def _export(module, args, out_path, input_names, output_names, opset=17):
@@ -281,6 +285,10 @@ def main(argv=None):
     ap.add_argument("--opset", type=int, default=17)
     ap.add_argument("--token", default=None)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--drop-final-norm", action="store_true",
+                    help="Move the encoder's final LayerNorm into the CPU head. "
+                         "The NPU scheduler cannot fit the final layer at L=256/512; "
+                         "the head applies the identical normalization on CPU.")
     args = ap.parse_args(argv)
 
     from safetensors.torch import load_file
@@ -324,6 +332,15 @@ def main(argv=None):
     with torch.no_grad():
         base.generate_fixtures(model, tok, cfg, out_dir)
 
+    final_norm = None
+    if args.drop_final_norm:
+        import torch.nn as nn
+        final_norm = getattr(model.encoder, "final_norm", None)
+        if final_norm is None:
+            raise SystemExit("encoder has no final_norm to move")
+        model.encoder.final_norm = nn.Identity()
+        print("  moved encoder.final_norm into the CPU head")
+
     B, L, M = 1, args.seq_len, args.markers
     ids = torch.zeros(B, L, dtype=torch.long)
     att = torch.ones(B, L, dtype=torch.long)
@@ -341,7 +358,7 @@ def main(argv=None):
     mmask = torch.ones(B, M, dtype=torch.bool)
     qtype = torch.zeros(B, dtype=torch.long)
     t0 = time.perf_counter()
-    _export(HeadWrapper(model), (hidden, att, mpos, mmask, qtype),
+    _export(HeadWrapper(model, final_norm), (hidden, att, mpos, mmask, qtype),
             os.path.join(out_dir, "head.onnx"),
             ["hidden_states", "attention_mask", "marker_pos", "marker_mask", "qtype"],
             ["logits", "act_logits"], opset=args.opset)

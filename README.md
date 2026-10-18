@@ -9,7 +9,7 @@ Jev client / Forseti / hs-jev
         ▼
   laya-npu :8751
         ├── tokenizer + sequence builder + answers/calibration   (CPU)
-        ├── ModernBERT-large encoder ── VitisAI EP ── XDNA2 NPU   (BF16)
+        ├── fine-tuned 322 M mmBERT encoder ── VitisAI EP ── XDNA2 NPU (BF16)
         └── decision head ── CPU (sub-ms to ~20 ms; see below)
 ```
 
@@ -21,31 +21,36 @@ ROCm `gfx1151`; Laya keeps the NPU busy and leaves the iGPU to that engine.
 
 - [x] XRT 2.25.37 + amdxdna 2.25 installed; `xrt-smi examine` sees the NPU
       (firmware 1.1.2.65, `aie2p`, 6x8).
-- [x] Static **split** ONNX export: encoder + head, opset 17, batch 1,
-      sequence 256 (v0.1.0; 512 needs an encoder split/compiler change),
-      8 marker slots.  Parity against PyTorch: max `|dlogits| = 3.3e-05`.
-- [x] Encoder simplified with `onnxsim`: 3667 -> 1280 nodes, all
-      `Range`/`CastLike`/`Cos`/`Sin` folded, hidden-state parity 0.
-- [x] Mask rewrite: the last `GatherND` (a mask `[0,i]` gather) becomes an
-      `Unsqueeze`; 1279 nodes, parity 0.  The only non-BF16-table ops left are
-      57 `LayerNormalization` and 28 `Softmax`, both of which the compiler
-      handles for BERT-family encoders (to be confirmed in the report).
-- [x] CPU end-to-end Jev server (`/v1/systemone`, `/batch`, `/health`,
-      `/metrics`, `/npu/health`).  Forseti's 9-probe gate passes 9/9.
+- [x] Static ONNX export: encoder + head, opset 17, batch 1, sequence 256,
+      8 marker slots; PyTorch parity max `|dlogits| = 3.3e-05` (English).
+- [x] Encoder simplified with `onnxsim` and the mask `GatherND` rewritten to
+      `Unsqueeze`; the NPU graph has only `LayerNormalization`/`Softmax`
+      outside AMD's BF16 table.
+- [x] **Fine-tuned 322 M multilingual Laya encoder** on English triage
+      decisions (`training/data/forseti_*.jsonl`); Forseti's 9-probe gate
+      passes **9/9** on CPU and on the NPU.
+- [x] BF16 EP context compiled for the 322 M encoder at
+      `B=1, L=256, M=8`; VitisAI EP reports ~99.7% operator support and
+      100% GOPs.
+- [x] NPU Jev service (`/v1/systemone`, `/batch`, `/health`, `/metrics`,
+      `/npu/health`); `/health` reports `device: npu`, no CPU fallbacks.
 - [x] Ryzen AI 1.8 runtime installed on Ubuntu 26.04 with the documented
       workarounds; `quicktest.py` reports `NPU 398 / CPU 2` and
       `Actually running on NPU 1`.
-- [x] `laya-strix` installed into the Ryzen AI venv with AMD's
-      `onnxruntime` preserved.
-- [ ] Encoder compile to a BF16 EP context + operator-assignment report
-      (preliminary: 1265/1268 ops, 99.999% GOPs supported).
-- [ ] NPU latency / parity / coexistence bench with gufo.
 - [x] Training wrapper around the official `laya-train` loop, with a separate
-      CPU/ROCm venv and a llama-swap contention guard.
+      CPU/ROCm venv, run artifacts, and a llama-swap contention guard.
+- [x] Benchmarks: one question p50 `131.8 ms`, three questions p50
+      `389.4 ms`; Jev parity 0 argmax changes / max dp `0.0065`; gufo decode
+      regression under Laya load ~`4%`.  Details in `docs/benchmarks.md`.
 
-The fused export (one graph) works on CPU but contains ONNX sequence ops from
-`qkv.unbind` / `chunk`; the split export replaces those with `select` / slices
-and keeps the unsupported head ops (`TopK`, sequences) off the NPU.
+The 421 M **English ModernBERT-large** BF16 graph does not fit the current
+XDNA2 AIE scheduler: it fails at fused layer 32 at L=512/256/128, with a
+14+14 layer split, and with the L3/spilling/optimisation knobs. Quark
+A8W8/A16W8 quantization was not accurate enough for Laya's calibrated
+answers. The deployed v0.1.0 encoder is therefore the 322 M
+`laya-multilingual` checkpoint, fine-tuned for the English decisions; the
+English split/quantization experiments remain in the repo for a future
+compiler/driver.
 
 ## Layout
 
@@ -58,14 +63,27 @@ artifacts/             exported ONNX / compiled EP contexts (gitignored)
 
 ## Export and run locally (CPU)
 
+The English 421 M checkpoint is still the fastest way to get a CPU correctness
+reference.  The deployed NPU checkpoint is the 322 M fine-tune (see
+`docs/install-valhalla.md`).
+
 ```bash
 uv venv .venv --python 3.12
 uv pip install -e '.[export,dev]'
 
 python tools/export_split_static.py --model english \
   --out artifacts/onnx/english_split_256 --seq-len 256 --markers 8 --opset 17
+python tools/simplify_graph.py --model artifacts/onnx/english_split_256/encoder.onnx \
+  --out artifacts/onnx/english_split_256/encoder_sim.onnx \
+  --verify artifacts/onnx/english_split_256/fixtures.npz
+python tools/rewrite_mask.py --model artifacts/onnx/english_split_256/encoder_sim.onnx \
+  --out artifacts/onnx/english_split_256/encoder_sim_nomask.onnx \
+  --verify artifacts/onnx/english_split_256/fixtures.npz
 
-LAYA_MODEL_DIR=$PWD/artifacts/onnx/english_split \
+LAYA_MODEL_DIR=$PWD/artifacts/onnx/english_split_256 \
+LAYA_ENCODER=$PWD/artifacts/onnx/english_split_256/encoder_sim_nomask.onnx \
+LAYA_HEAD=$PWD/artifacts/onnx/english_split_256/head.onnx \
+LAYA_SEQ_LEN=256 \
 LAYA_PROVIDER=CPUExecutionProvider \
 LAYA_PORT=8753 \
 laya-npu serve --host 127.0.0.1 --port 8753
@@ -213,14 +231,19 @@ exporter and retains that provenance.  See [`NOTICE`](NOTICE).
 
 ## Known limits (v1)
 
-- English checkpoint only.  The Router will still try to route non-English
-  text to `multilingual`; attach a compiled multilingual agent before enabling
-  that traffic.
-- One NPU row at a time (`LAYA_BATCH=1`), padded to 256 tokens.  Add compiled
-  `B=2/4` and shorter `L` profiles after the first latency measurement.
-- The head runs on CPU.  On this M4 it costs ~20 ms per 256-token row; the
-  NPU encoder is the remaining cost.  If the head dominates, the next step is
-  to remove its `TopK`/sequence ops and compile it for the NPU too.
+- The deployed encoder is the 322 M **multilingual** mmBERT-base fine-tune,
+  attached under both `english` and `multilingual`.  The 421 M English
+  ModernBERT-large BF16 graph does not fit the current AIE scheduler; see the
+  note above and `docs/benchmarks.md`.
+- One NPU row at a time (`LAYA_BATCH=1`), padded to 256 tokens.  Requests are
+  truncated at 256 and report `usage.truncated`.  A validated 128-token or
+  bucketed profile is the main latency lever.
+- The head runs on CPU (~20 ms/row with the pinned 2-thread profile).  It is
+  not compiled for the NPU; the encoder is ~109 ms/row at 256 tokens.
+- Training is CPU-first: the PyTorch ROCm 7.0 wheel segfaults against this
+  box's ROCm 10 / gfx1151 stack.  The wrapper probes the GPU in a child and
+  refuses/falls back.  Full fine-tuning is slow on CPU; `--freeze-encoder`
+  works for head/rubric adaptation.
 - `laya-npu` reuses `laya.serve`, so the Jev contract, auth, admission limits
   and answer decoding are the upstream ones; `laya==0.4.11` is pinned.
 

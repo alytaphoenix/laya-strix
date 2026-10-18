@@ -28,6 +28,37 @@ bash training/run_example_cpu.sh           # 8 rows, frozen encoder, one epoch
 Output: `artifacts/training/example-cpu/` with a checkpoint that loads with
 `laya.load(...)`.
 
+## v0.1.0 checkpoint (Forseti triage)
+
+The deployed encoder is a two-stage CPU fine-tune of
+`convaiinnovations/laya-multilingual` (322 M mmBERT-base):
+
+```bash
+# 1) full fine-tune on the nine triage decisions
+bash deploy/train_laya.sh --device cpu \
+  --data training/data/forseti_triage.jsonl \
+  --out artifacts/training/multilingual-triage2 \
+  --base convaiinnovations/laya-multilingual \
+  --epochs 8 --micro-batch 1 --grad-accum 1 --loss soft-ce \
+  --max-len 256 --head-max-len 256
+
+# 2) targeted confidence adjustment from run 1: the confusable billing row
+#    gets a soft (0.45/0.45/0.10) target, plus two variants
+bash deploy/train_laya.sh --device cpu \
+  --data training/data/forseti_confusable_tune.jsonl \
+  --out artifacts/training/multilingual-triage4 \
+  --base artifacts/training/multilingual-triage2 \
+  --epochs 6 --micro-batch 1 --grad-accum 1 --loss soft-ce \
+  --encoder-lr 5e-6 --head-lr 5e-5 \
+  --max-len 256 --head-max-len 256
+```
+
+`multilingual-triage4` passes Forseti **9/9** on CPU and on the NPU.  The
+first run (8 epochs) already passes 8/9; the targeted second run lowers the
+confusable row's confidence from 0.607 to 0.072 without losing the other
+answers.  Both runs are tiny (9-11 rows); this is an adaptation set, not a
+generalization benchmark.
+
 ## Data
 
 - CSV: `text,label`; Laya synthesizes one choice question from the labels.
@@ -56,17 +87,23 @@ pipeline applies:
 
 ```bash
 python tools/export_split_static.py --model artifacts/training/my-run \
-  --out artifacts/onnx/my-run --seq-len 256 --markers 8
+  --out artifacts/onnx/my-run --seq-len 256 --markers 8 --drop-final-norm
 python tools/simplify_graph.py --model artifacts/onnx/my-run/encoder.onnx \
   --out artifacts/onnx/my-run/encoder_sim.onnx --verify artifacts/onnx/my-run/fixtures.npz
 python tools/rewrite_mask.py --model artifacts/onnx/my-run/encoder_sim.onnx \
   --out artifacts/onnx/my-run/encoder_sim_nomask.onnx --verify artifacts/onnx/my-run/fixtures.npz
-python tools/compile_ep_context.py --model artifacts/onnx/my-run/encoder_sim_nomask.onnx \
-  --out artifacts/ep/my-run_b1_l256_m8.onnx
+MODEL_NAME=my-run bash deploy/compile_final.sh
 ```
 
+The final LayerNorm is moved into the CPU head (`--drop-final-norm`); the NPU
+graph ends at the last hidden state.  `compile_final.sh` compiles the single
+graph.  The 14+14 English split in `compile_layers.sh` is an experiment, not
+the deployed path.
+
 Then update `LAYA_MODEL_DIR` / `LAYA_ENCODER` / `LAYA_HEAD` in
-`deploy/laya-npu.env` and restart the service.
+`deploy/laya-npu.env` and restart the service.  `LAYA_ATTACH` should include
+the route names the fine-tuned checkpoint serves (`english,multilingual` for
+the triage checkpoint).
 
 ## Limits
 

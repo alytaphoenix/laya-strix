@@ -96,10 +96,38 @@ A run directory contains:
   `http://127.0.0.1:8732/v1/models` and refuses while llama-swap reports a
   loaded model.  Stop the model, or pass `--allow-gpu-contention` if you have
   measured the memory headroom.
-- For a ROCm wheel that does not recognise gfx1151, try
-  `LAYA_HSA_OVERRIDE=11.0.0 ... --device cuda`; drop the override once a newer
-  wheel supports the device natively.
+- The ROCm 7.0 wheel can report a gfx1151 device and then segfault on the
+  first kernel against this ROCm 10 stack.  `laya-npu train` probes in a
+  child process and refuses `--device cuda` (or falls back under `--device
+  auto`); CPU is the supported path.
 - `PYTORCH_HIP_ALLOC_CONF=expandable_segments:True` is set by the wrapper.
+
+## v0.1.0 triage checkpoint
+
+The deployed encoder is the 322 M multilingual base after two CPU runs:
+
+```bash
+bash deploy/train_laya.sh --device cpu \
+  --data training/data/forseti_triage.jsonl \
+  --out artifacts/training/multilingual-triage2 \
+  --base convaiinnovations/laya-multilingual \
+  --epochs 8 --micro-batch 1 --grad-accum 1 --loss soft-ce \
+  --max-len 256 --head-max-len 256
+
+bash deploy/train_laya.sh --device cpu \
+  --data training/data/forseti_confusable_tune.jsonl \
+  --out artifacts/training/multilingual-triage4 \
+  --base artifacts/training/multilingual-triage2 \
+  --epochs 6 --micro-batch 1 --grad-accum 1 --loss soft-ce \
+  --encoder-lr 5e-6 --head-lr 5e-5 \
+  --max-len 256 --head-max-len 256
+```
+
+`multilingual-triage4` passes Forseti's 9/9 gate on CPU and on the NPU.  The
+first run passes 8/9; the second (soft-target confusable row plus two
+variants) drops the confusable confidence from 0.607 to 0.072.  This is a
+small adaptation set, not a generalization claim.  Full recipe:
+[`../docs/training.md`](../docs/training.md).
 
 ## After training: put the fine-tune on the NPU
 
@@ -110,7 +138,7 @@ export/compile path works:
 python tools/export_split_static.py \
   --model artifacts/training/my-run \
   --out artifacts/onnx/my-run \
-  --seq-len 256 --markers 8
+  --seq-len 256 --markers 8 --drop-final-norm
 
 python tools/simplify_graph.py \
   --model artifacts/onnx/my-run/encoder.onnx \
@@ -122,17 +150,19 @@ python tools/rewrite_mask.py \
   --out artifacts/onnx/my-run/encoder_sim_nomask.onnx \
   --verify artifacts/onnx/my-run/fixtures.npz
 
-python tools/compile_ep_context.py \
-  --model artifacts/onnx/my-run/encoder_sim_nomask.onnx \
-  --out artifacts/ep/my-run_b1_l256_m8.onnx
+MODEL_NAME=my-run MODEL_DIR=$PWD/artifacts/onnx/my-run \
+  bash deploy/compile_final.sh
 ```
 
-Then point `LAYA_MODEL_DIR`/`LAYA_ENCODER`/`LAYA_HEAD` at the new artifacts.
+Then point `LAYA_MODEL_DIR`/`LAYA_ENCODER`/`LAYA_HEAD` at the new artifacts
+and set `LAYA_ATTACH` to the route names it serves.
 
 ## Notes
 
 - The official loop saves the checkpoint at the end, not per epoch; keep runs
   short or copy the run directory when a long run reaches a useful point.
 - `--freeze-encoder` is the fastest way to adapt the heads to a new rubric.
-- Full fine-tuning on CPU is slow; use the ROCm venv for real runs, or a
-  smaller checkpoint (`multilingual`, 322 M) when memory is tight.
+- Full fine-tuning on CPU is slow; the ROCm 7.0 wheel is experimental on this
+  box's ROCm 10/gfx1151 stack (the wrapper probes/refuses).  The 322 M
+  multilingual checkpoint is the practical target; `--freeze-encoder` is the
+  fastest way to adapt the heads.

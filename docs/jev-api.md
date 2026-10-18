@@ -116,9 +116,11 @@ and serve only Jev's documented fields.
 
 ## Errors
 
-- Unknown checkpoint / non-attached model: the English-only router refuses to
-  build a torch checkpoint behind the NPU service.  Attach a compiled
-  multilingual/typed-decisions agent before enabling that traffic.
+- Unknown checkpoint / non-attached model: the attached-only router refuses
+  to build a torch checkpoint behind the NPU service.  The deployed
+  fine-tuned 322 M agent is attached under `english,multilingual`
+  (`LAYA_ATTACH`); attach a compiled typed-decisions agent before enabling
+  that traffic.
 - NPU/EP unavailable: startup fails closed (no silent CPU fallback) unless
   `LAYA_ALLOW_CPU_FALLBACK=1` is set for a development run.
 - Malformed bodies, over-budget requests and admission overflow: the upstream

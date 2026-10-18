@@ -73,48 +73,87 @@ the Ryzen AI venv.  The script pins the installed `onnxruntime`/`numpy` with a
 constraints file and asserts that `VitisAIExecutionProvider` survives — a
 stray PyPI `onnxruntime` would replace AMD's build.
 
-## 4. Compile the encoder
+## 4. Build the deployed checkpoint
+
+v0.1.0 serves a **fine-tuned 322 M multilingual Laya encoder** (`mmBERT-base`)
+at a 256-token profile.  The 421 M English ModernBERT-large BF16 graph does
+not fit the current XDNA2 AIE scheduler: it fails at fused layer 32
+(`Auto-phase failed ... hardware resources constraint`) at L=512, 256 and 128,
+with the 14+14 layer split, and with the L3/spilling/optimisation config
+knobs.  Quark A8W8/A16W8 quantization was not accurate enough for Laya's
+calibrated answers.  The 322 M encoder fits, and after the English triage
+fine-tune it passes Forseti's 9/9 gate.
+
+### Train (CPU)
 
 ```bash
-bash deploy/compile_encoder.sh
+source ~/laya-train-venv/bin/activate   # deploy/install_train_deps.sh
+
+# 1) full fine-tune of the multilingual base on the triage decisions
+bash deploy/train_laya.sh --device cpu \
+  --data training/data/forseti_triage.jsonl \
+  --out artifacts/training/multilingual-triage2 \
+  --base convaiinnovations/laya-multilingual \
+  --epochs 8 --micro-batch 1 --grad-accum 1 --loss soft-ce \
+  --max-len 256 --head-max-len 256
+
+# 2) targeted abstention/confidence adjustment from run 1
+bash deploy/train_laya.sh --device cpu \
+  --data training/data/forseti_confusable_tune.jsonl \
+  --out artifacts/training/multilingual-triage4 \
+  --base artifacts/training/multilingual-triage2 \
+  --epochs 6 --micro-batch 1 --grad-accum 1 --loss soft-ce \
+  --encoder-lr 5e-6 --head-lr 5e-5 \
+  --max-len 256 --head-max-len 256
 ```
 
-This runs the simplify and mask-rewrite steps if needed, then compiles
-`encoder_sim_nomask.onnx` to `artifacts/ep/english_b1_l256_m8.onnx` and writes
-the operator-assignment report to `artifacts/ep-cache/`.  The compile is
-one-time and can take minutes.
-
-Check the report:
+`multilingual-triage4` is the v0.1.0 checkpoint.  Run the CPU gate:
 
 ```bash
-python - <<'PY'
-import json
-d=json.load(open("artifacts/ep-cache/vitisai_ep_report.json"))
-for r in d.get("deviceStat", []):
-    print(r.get("name"), r.get("nodeNum"))
-PY
+# start a CPU service from the exported ONNX (below), or use laya.load()
 ```
 
-The default is the **256-token** profile.  The 512-token profile reaches the
-AIE backend but fails the scheduler with
-`Auto-phase failed to find solution to meet hardware resources constraint at
-layer 32`; it needs the encoder split into compiled subgraphs or a compiler
-configuration that reduces layer-32 buffer pressure.  That is a follow-up, not
-a v0.1.0 blocker.
+The ROCm training wheel is experimental on this box's ROCm 10 stack; CPU is
+the supported path.  See `docs/training.md`.
 
-If you regenerate the 256 artifacts:
+### Export
+
+Run on a machine with PyTorch/ONNX (the Mac dev venv is fine), then copy the
+directory to `valhalla`:
 
 ```bash
-python tools/export_split_static.py --model english \
-  --out artifacts/onnx/english_split_256 --seq-len 256 --markers 8 --opset 17
-MODEL_DIR=$PWD/artifacts/onnx/english_split_256 SEQ_LEN=256 bash deploy/compile_encoder.sh
+python tools/export_split_static.py \
+  --model artifacts/training/multilingual-triage4 \
+  --out artifacts/onnx/multilingual_triage4_single \
+  --seq-len 256 --markers 8 --opset 17 --drop-final-norm
+
+python tools/simplify_graph.py \
+  --model artifacts/onnx/multilingual_triage4_single/encoder.onnx \
+  --out artifacts/onnx/multilingual_triage4_single/encoder_sim.onnx \
+  --verify artifacts/onnx/multilingual_triage4_single/fixtures.npz
+
+python tools/rewrite_mask.py \
+  --model artifacts/onnx/multilingual_triage4_single/encoder_sim.onnx \
+  --out artifacts/onnx/multilingual_triage4_single/encoder_sim_nomask.onnx \
+  --verify artifacts/onnx/multilingual_triage4_single/fixtures.npz
 ```
 
-Use `LAYA_SEQ_LEN=256`, `LAYA_MODEL_DIR=...english_split_256`,
-`LAYA_ENCODER=.../english_b1_l256_m8.onnx`,
-`LAYA_HEAD=...english_split_256/head.onnx`, and
-`LAYA_EP_CACHE_KEY=english_b1_l256_m8`.  The service truncates states at the
-compiled length and reports `usage.truncated` accordingly.
+### Compile
+
+```bash
+bash deploy/compile_final.sh
+```
+
+It compiles the single encoder to
+`artifacts/ep/multilingual_triage4_b1_l256_m8.onnx` and writes
+`artifacts/ep-cache/multilingual_triage4_b1_l256_m8_report.json`.  Expect
+~99.7% operator coverage and 100% GOPs on the NPU.
+
+The English split/quantization experiments remain in the repo for a future
+compiler/driver: `deploy/compile_layers.sh` (14+14 layers; fails at layer 32),
+`deploy/vai_ep_config_l1.json` / `_l3.json` / `_l3b.json` (optimisation,
+1 GB L3 and spilling variants; all fail), and `tools/quantize_a8w8.py`
+(accuracy not acceptable).  They are not the v0.1.0 deployment path.
 
 ## 5. Run the service
 

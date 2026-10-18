@@ -16,16 +16,18 @@ RestartSec=2
 # XRT maps its device heap with MAP_LOCKED.
 LimitMEMLOCK=infinity
 
-# Leave the rest of the box to gufo.  Laya's tokenizer is single-threaded and
-# the CPU head is small; 8 cores is ample.  Tune after the coexistence bench.
-CPUAffinity=0-7
-Nice=5
+# Leave the rest of the box to gufo.  The encoder is on the NPU; the remaining
+# work is tokenization and a 2-thread CPU head.  Four cores is enough, and the
+# coexistence bench showed that letting the head fan out to every core
+# starves gufo's CPU sampling loop.
+CPUAffinity=0-3
+Nice=10
 IOSchedulingClass=idle
 
-# Laya is ~1.6 GB of BF16 encoder + ~0.1 GB head + a small runtime.  Bound it
-# so a burst cannot evict Flash-Next's KV/cache.
-MemoryHigh=3G
-MemoryMax=4G
+# Laya is ~1.5 GB of BF16 encoder contexts + ~0.1 GB head + a small runtime.
+# Bound it so a burst cannot evict Flash-Next's KV/cache.
+MemoryHigh=4G
+MemoryMax=5G
 
 # NPU device access (the installed udev rule makes it 0666, but be explicit).
 DeviceAllow=/dev/accel/accel0 rw

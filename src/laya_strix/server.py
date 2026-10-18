@@ -35,8 +35,10 @@ def build_app(settings: Settings | None = None, *, calibration: str | None = Non
     session = SplitSession(settings)
     agent = build_agent(settings.model_dir, session, calibration=calibration)
 
-    router = _AttachedOnlyRouter(default="english", max_loaded=1, preload=False)
-    router.attach("english", agent)
+    names = settings.attach or ("english",)
+    router = _AttachedOnlyRouter(default=names[0], max_loaded=len(names), preload=False)
+    for name in names:
+        router.attach(name, agent)
     app = create_app(router)
 
     counts = {"requests": 0, "errors": 0, "started": time.time()}

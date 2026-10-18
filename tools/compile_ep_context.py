@@ -86,7 +86,8 @@ def main(argv=None):
     out = os.path.abspath(args.out)
     cache_dir = os.path.abspath(args.cache_dir)
     cache_key = args.cache_key or os.path.splitext(os.path.basename(out))[0]
-    report = os.path.abspath(args.report_file or os.path.join(cache_dir, "vitisai_ep_report.json"))
+    report = os.path.abspath(args.report_file or
+                             os.path.join(cache_dir, cache_key + "_report.json"))
     config = os.path.abspath(args.config)
 
     os.makedirs(os.path.dirname(out), exist_ok=True)
@@ -130,8 +131,8 @@ def main(argv=None):
         print("  out %-16s %s %s" % (o.name, o.type, o.shape))
 
     feeds = _feed(session)
-    logits, act = session.run(None, feeds)
-    print("output shapes: logits=%s act=%s" % (logits.shape, act.shape))
+    outputs = session.run(None, feeds)
+    print("output shapes: %s" % [tuple(o.shape) for o in outputs])
     times = []
     for _ in range(args.iterations):
         t = time.perf_counter()
@@ -154,7 +155,9 @@ def main(argv=None):
             print("  %-6s nodes=%s" % (row.get("name"), row.get("nodeNum")))
             print("         %s" % ", ".join(row.get("supportedOpType", [])[:12]))
         devices = {row.get("name"): row.get("nodeNum") for row in data.get("deviceStat", [])}
-        if devices.get("NPU", 0) == 0:
+        # The report uses "VAIML" for the NPU partition (some releases say
+        # "NPU"); count either, and never treat the CPU residual as the device.
+        if devices.get("VAIML", 0) == 0 and devices.get("NPU", 0) == 0:
             raise SystemExit("report says zero nodes on the NPU; do not deploy this context")
     else:
         print("WARNING: no operator assignment report at %s" % report)

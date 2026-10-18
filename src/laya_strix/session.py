@@ -93,15 +93,41 @@ class SplitSession:
         so = ort.SessionOptions()
         so.log_severity_level = 1
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # The decision head is CPU-side.  Keep it from fanning out to every
+        # core and starving gufo's sampling thread; the NPU encoder is the
+        # real work.  The service is also pinned with systemd CPUAffinity.
+        so.intra_op_num_threads = settings.head_threads
+        so.inter_op_num_threads = 1
 
-        provider_options = [settings.provider_options] if settings.provider_options else None
+        # A loaded EP context model already contains the compiled graph; ORT
+        # warns if a cache key is supplied with it.  Keep the BF16 config file
+        # (required) and drop only the cache key.
+        runtime_options = {k: v for k, v in settings.provider_options.items()
+                           if k != "cache_key"}
+        if provider == "CPUExecutionProvider":
+            providers = ["CPUExecutionProvider"]
+            provider_options = None
+        else:
+            # VitisAI partitions the graph itself and ORT adds the CPU EP for
+            # the residual subgraphs; listing providers=[EP, CPU] with one
+            # options dict trips ORT's equal-length check.
+            providers = [provider]
+            provider_options = [runtime_options] if runtime_options else None
         t0 = time.perf_counter()
         self.encoder = ort.InferenceSession(
             str(settings.encoder),
             sess_options=so,
-            providers=[provider, "CPUExecutionProvider"],
+            providers=providers,
             provider_options=provider_options,
         )
+        self.encoder_b = None
+        if settings.encoder_b is not None:
+            self.encoder_b = ort.InferenceSession(
+                str(settings.encoder_b),
+                sess_options=so,
+                providers=providers,
+                provider_options=provider_options,
+            )
         self.encoder_load_s = time.perf_counter() - t0
 
         self.head = ort.InferenceSession(
@@ -110,8 +136,10 @@ class SplitSession:
             providers=["CPUExecutionProvider"],
         )
 
-        log.info("encoder loaded in %.1f s on %s", self.encoder_load_s,
+        log.info("encoder A loaded in %.1f s on %s", self.encoder_load_s,
                  self.encoder.get_providers())
+        if self.encoder_b is not None:
+            log.info("encoder B loaded on %s", self.encoder_b.get_providers())
         log.info("head loaded on %s", self.head.get_providers())
 
         self._check_shapes()
@@ -127,10 +155,16 @@ class SplitSession:
                         "encoder input %s has shape %s; LAYA_SEQ_LEN is %d. "
                         "Re-export/compile the graph for this sequence length."
                         % (i.name, i.shape, expected[i.name]))
-        for i in self.head.get_inputs():
-            if i.name == "input_ids":
-                continue
-        log.info("encoder inputs: %s", [(i.name, i.shape) for i in self.encoder.get_inputs()])
+        if self.encoder_b is not None:
+            for i in self.encoder_b.get_inputs():
+                if i.name == "attention_mask" and isinstance(i.shape[1], int):
+                    if i.shape[1] != self.settings.seq_len:
+                        raise RuntimeError(
+                            "encoder B attention_mask shape %s does not match "
+                            "LAYA_SEQ_LEN=%d" % (i.shape, self.settings.seq_len))
+        log.info("encoder A inputs: %s", [(i.name, i.shape) for i in self.encoder.get_inputs()])
+        if self.encoder_b is not None:
+            log.info("encoder B inputs: %s", [(i.name, i.shape) for i in self.encoder_b.get_inputs()])
         log.info("head inputs: %s", [(i.name, i.shape) for i in self.head.get_inputs()])
 
     def warmup(self, rows: int = 1):
@@ -168,6 +202,9 @@ class SplitSession:
         t0 = time.perf_counter()
         hidden = self.encoder.run(
             None, {"input_ids": x_ids, "attention_mask": x_att})[0]
+        if self.encoder_b is not None:
+            hidden = self.encoder_b.run(
+                None, {"hidden_states_in": hidden, "attention_mask": x_att})[0]
         enc_ms = (time.perf_counter() - t0) * 1000.0
         t1 = time.perf_counter()
         logits, act = self.head.run(None, {
@@ -233,10 +270,15 @@ class SplitSession:
             "backend": "vitisai-npu" if "VitisAIExecutionProvider" in self.provider else "cpu",
             "provider": self.provider,
             "encoder_path": str(self.settings.encoder),
+            "encoder_b_path": str(self.settings.encoder_b) if self.settings.encoder_b else None,
             "head_path": str(self.settings.head),
             "encoder_load_s": round(self.encoder_load_s, 2),
             "encoder_inputs": [(i.name, i.shape) for i in self.encoder.get_inputs()],
             "encoder_outputs": [(o.name, o.shape) for o in self.encoder.get_outputs()],
+            "encoder_b_inputs": ([(i.name, i.shape) for i in self.encoder_b.get_inputs()]
+                                 if self.encoder_b is not None else None),
+            "encoder_b_outputs": ([(o.name, o.shape) for o in self.encoder_b.get_outputs()]
+                                  if self.encoder_b is not None else None),
             "head_providers": self.head.get_providers(),
             "seq_len": self.settings.seq_len,
             "markers": self.settings.markers,
