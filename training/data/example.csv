@@ -1,0 +1,9 @@
+text,label
+"Hi, I was billed twice for March and the duplicate charge has not been refunded.",billing
+"Please update the card on file before the next invoice; the old one expired.",billing
+"The mobile app closes every time I open the settings screen.",technical
+"Your API returns a 502 for every request since this morning's deploy.",technical
+"I cannot log in after changing my email address; the reset link is not arriving.",account
+"Please add two more seats to our plan and send the updated invoice.",account
+"The integration stopped syncing tickets after we rotated the API key.",technical
+"Can you move our annual renewal to a different billing entity?",billing

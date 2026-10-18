@@ -7,7 +7,18 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="laya-npu")
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    # `train` has its own parser; intercept it before the serve flags would
+    # reject --data/--out/--epochs.
+    if argv and argv[0] == "train":
+        from .train import run_training
+        return run_training(argv[1:])
+
+    ap = argparse.ArgumentParser(
+        prog="laya-npu",
+        epilog="Subcommands: serve, train (see `laya-npu train --help`).",
+    )
     ap.add_argument("command", nargs="?", default="serve",
                     choices=["serve", "verify", "bench"])
     ap.add_argument("--host", default="127.0.0.1")

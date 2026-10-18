@@ -64,7 +64,7 @@ else
     SRC="$(dirname "$found")"
   fi
   echo "== installing Ryzen AI into $VENV (this takes a while, ~24 GB) =="
-  ( cd "$SRC" && ./install_ryzen_ai.sh -a yes -p "$VENV" )
+  ( cd "$SRC" && yes | DEBIAN_FRONTEND=noninteractive ./install_ryzen_ai.sh -a yes -p "$VENV" )
 fi
 
 echo "== clearing the executable-stack bit =="

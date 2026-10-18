@@ -1,0 +1,18 @@
+laya-strix
+Copyright (c) 2026 laya-strix contributors
+Licensed under the MIT License (see LICENSE).
+
+This project includes or depends on separately licensed material:
+
+* Laya (`laya` on PyPI, https://github.com/NandhaKishorM/laya) and the Laya
+  model checkpoints are Apache-2.0.  `tools/export_onnx_static.py` is derived
+  from `laya-rust/tools/export_onnx.py` in that repository and retains its
+  Apache-2.0 provenance.
+
+* AMD Ryzen AI 1.8, XRT, and the VitisAI ONNX Runtime execution provider are
+  AMD software, installed from AMD's packages on the target host.  None of it
+  is redistributed in this repository.
+
+* The Ubuntu 26.04 installation notes were validated against
+  `kotetsuy/ryzenai_1_8`; the scripts here are independent implementations of
+  the documented workarounds.

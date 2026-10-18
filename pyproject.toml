@@ -8,7 +8,14 @@ version = "0.1.0"
 description = "Laya decision inference on the AMD XDNA2 NPU"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Apache-2.0" }
+license = { text = "MIT" }
+authors = [{ name = "laya-strix contributors" }]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 
 # Runtime needs the official `laya` package for the sequence builder, typed
 # answers and calibration.  It deliberately does NOT depend on the `onnx`
@@ -44,6 +51,19 @@ laya-npu = "laya_strix.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/laya_strix"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/laya_strix",
+  "tools",
+  "deploy",
+  "training",
+  "docs",
+  "README.md",
+  "CHANGELOG.md",
+  "NOTICE",
+  "LICENSE",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

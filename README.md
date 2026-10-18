@@ -32,10 +32,16 @@ ROCm `gfx1151`; Laya keeps the NPU busy and leaves the iGPU to that engine.
       handles for BERT-family encoders (to be confirmed in the report).
 - [x] CPU end-to-end Jev server (`/v1/systemone`, `/batch`, `/health`,
       `/metrics`, `/npu/health`).  Forseti's 9-probe gate passes 9/9.
-- [ ] Ryzen AI 1.8 runtime.  Blocked on AMD's EULA package
-      (`ryzen_ai-1.8.0.tgz`, 7.3 GB).
-- [ ] Encoder compile to a BF16 EP context + operator-assignment report.
-- [ ] NPU latency / coverage gate and coexistence bench with gufo.
+- [x] Ryzen AI 1.8 runtime installed on Ubuntu 26.04 with the documented
+      workarounds; `quicktest.py` reports `NPU 398 / CPU 2` and
+      `Actually running on NPU 1`.
+- [x] `laya-strix` installed into the Ryzen AI venv with AMD's
+      `onnxruntime` preserved.
+- [ ] Encoder compile to a BF16 EP context + operator-assignment report
+      (preliminary: 1265/1268 ops, 99.999% GOPs supported).
+- [ ] NPU latency / parity / coexistence bench with gufo.
+- [x] Training wrapper around the official `laya-train` loop, with a separate
+      CPU/ROCm venv and a llama-swap contention guard.
 
 The fused export (one graph) works on CPU but contains ONNX sequence ops from
 `qkv.unbind` / `chunk`; the split export replaces those with `select` / slices
@@ -159,6 +165,46 @@ FORSETI_LAYA_URL=http://127.0.0.1:8753 scripts/laya-eval.sh
 - **LAN:** set `LAYA_HOST=0.0.0.0`, set `LAYA_API_KEY`, open only the LAN
   interface in the firewall.  Clients send `Authorization: Bearer ...`.
   `/health` liveness stays open by design; the detail keys need the token.
+
+## Training
+
+Training uses the official `laya-train` loop in a **separate venv**, so a
+PyTorch build can coexist with AMD's inference `onnxruntime`:
+
+```bash
+bash deploy/install_train_deps.sh          # CPU, safe default
+# or: bash deploy/install_train_deps.sh --rocm
+
+bash training/run_example_cpu.sh           # 8 rows, frozen encoder, one epoch
+bash deploy/train_laya.sh --device cpu \
+  --data training/data/example.csv \
+  --out artifacts/training/my-run \
+  --epochs 4 --micro-batch 8 --grad-accum 8
+```
+
+`laya-npu train` wraps `laya-train`, writes `run.json`/`train.log`, defaults to
+CPU (so it cannot evict gufo), and refuses `--device cuda` while llama-swap
+reports a loaded model.  See [`training/README.md`](training/README.md) and
+[`docs/training.md`](docs/training.md).
+
+## Documentation
+
+- [`docs/architecture.md`](docs/architecture.md) — split encoder/head, graph
+  build, shapes, coexistence.
+- [`docs/jev-api.md`](docs/jev-api.md) — endpoints, request/response, auth,
+  batch, strict mode.
+- [`docs/install-valhalla.md`](docs/install-valhalla.md) — XRT/Ryzen AI 1.8,
+  Ubuntu 26.04 workarounds, compile, systemd.
+- [`docs/training.md`](docs/training.md) — training design and the route back
+  to an NPU artifact.
+- [`docs/benchmarks.md`](docs/benchmarks.md) — methodology and measured
+  numbers.
+
+## License
+
+Code is **MIT** (see [`LICENSE`](LICENSE)).  Laya and its checkpoints are
+Apache-2.0; `tools/export_onnx_static.py` is derived from Laya's Apache-2.0
+exporter and retains that provenance.  See [`NOTICE`](NOTICE).
 
 ## Known limits (v1)
 
