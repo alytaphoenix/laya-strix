@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ssl
 import sys
 import urllib.request
 
@@ -48,11 +49,14 @@ def _request_for(row):
     raise ValueError("unknown probe kind %r" % kind)
 
 
-def _post(url, state, questions):
+def _post(url, state, questions, api_key=None, context=None):
     body = json.dumps({"state": state, "questions": questions}).encode()
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = "Bearer " + api_key
     req = urllib.request.Request(url.rstrip("/") + "/v1/systemone", data=body,
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
+                                 headers=headers)
+    with urllib.request.urlopen(req, timeout=60, context=context) as r:
         return json.load(r)
 
 
@@ -67,7 +71,29 @@ def main(argv=None):
     ap.add_argument("--candidate", required=True)
     ap.add_argument("--probes", required=True)
     ap.add_argument("--max-dp", type=float, default=0.01)
+    ap.add_argument("--api-key-file", default=None,
+                    help="Bearer key for both endpoints.")
+    ap.add_argument("--reference-api-key-file", default=None,
+                    help="Bearer key for --reference (overrides --api-key-file).")
+    ap.add_argument("--candidate-api-key-file", default=None,
+                    help="Bearer key for --candidate (overrides --api-key-file).")
+    ap.add_argument("--ca-cert", default=None,
+                    help="CA bundle for self-signed HTTPS endpoints.")
+    ap.add_argument("--insecure", action="store_true",
+                    help="Disable TLS verification (testing only).")
     args = ap.parse_args(argv)
+
+    def key(path):
+        return open(path, encoding="utf-8").read().strip() if path else None
+
+    common_key = key(args.api_key_file)
+    ref_key = key(args.reference_api_key_file) or common_key
+    cand_key = key(args.candidate_api_key_file) or common_key
+    context = None
+    if args.insecure:
+        context = ssl._create_unverified_context()
+    elif args.ca_cert:
+        context = ssl.create_default_context(cafile=args.ca_cert)
 
     rows = [json.loads(line) for line in open(args.probes) if line.strip()]
     worst = 0.0
@@ -75,8 +101,8 @@ def main(argv=None):
     failures = []
     for i, row in enumerate(rows, 1):
         state, questions = _request_for(row)
-        ref = _answer(_post(args.reference, state, questions))
-        cand = _answer(_post(args.candidate, state, questions))
+        ref = _answer(_post(args.reference, state, questions, ref_key, context))
+        cand = _answer(_post(args.candidate, state, questions, cand_key, context))
 
         if ref.get("type") == "noul":
             dp = abs(float(ref.get("noul", 0)) - float(cand.get("noul", 0)))

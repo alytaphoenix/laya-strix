@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "laya-strix"
-version = "0.1.0"
+version = "0.2.0"
 description = "Laya decision inference on the AMD XDNA2 NPU"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -59,6 +59,7 @@ include = [
   "deploy",
   "training",
   "docs",
+  "tests",
   "README.md",
   "CHANGELOG.md",
   "NOTICE",

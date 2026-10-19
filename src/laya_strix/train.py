@@ -223,6 +223,10 @@ def run_training(argv=None) -> int:
               (meta["torch"], meta["torch_hip"], meta.get("torch_device_name")),
               flush=True)
 
+    # The official trainer runs in this process and reads os.environ; apply
+    # the allocator/HSA settings built above (a subprocess would inherit them).
+    os.environ.update(env)
+
     from laya.train_cli import main as train_main
 
     t0 = time.perf_counter()

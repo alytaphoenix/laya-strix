@@ -1,8 +1,8 @@
 # Benchmarks
 
 Measured on `valhalla` (Ryzen AI MAX+ 395, 128 GB unified memory, Ubuntu
-26.04, XRT 2.25.37, Ryzen AI 1.8, NPU firmware 1.1.2.65) with the v0.1.0
-fine-tuned 322 M encoder.
+26.04, XRT 2.25.37, Ryzen AI 1.8, NPU firmware 1.1.2.65) with the
+fine-tuned 322 M encoder used by the 0.2.0 release.
 
 ## Method
 
@@ -18,7 +18,9 @@ python3 tools/bench.py --url http://127.0.0.1:8751 --requests 20 --warmup 2 \
 
 The default body has three questions; `/tmp/one_q.json` is a single choice
 question.  `tools/bench.py` reports min/p50/p95/max plus the service's
-encoder/head/padding counters from `/npu/health`.
+encoder/head/padding counters from `/npu/health`.  For a secured endpoint add
+`--api-key-file`, `--ca-cert` (self-signed) or `--insecure` (test only);
+`tools/parity.py` accepts the same plus separate per-endpoint keys.
 
 ### Jev parity
 
@@ -67,7 +69,7 @@ head and `Nice=10`; gufo keeps the rest.
 
 ## Notes
 
-- The deployed v0.1.0 encoder is the fine-tuned 322 M multilingual
+- The deployed encoder is the fine-tuned 322 M multilingual
   `mmBERT-base`.  The 421 M English ModernBERT-large BF16 graph does not fit
   the current AIE scheduler: it fails at fused layer 32 at L=512, 256 and
   128, with a 14+14 layer split, and with the L3/spilling/optimisation config
@@ -79,7 +81,7 @@ head and `Nice=10`; gufo keeps the rest.
   validated 128-token or bucketed profile should roughly halve the encoder
   time.  The 322 M graph has not been compiled at 128 yet.
 - The head is CPU-side and currently ~20 ms/row with two threads.  It is
-  small; compiling it for the NPU would remove that cost but is not a v0.1.0
+  small; compiling it for the NPU would remove that cost but is not a 0.2.0
   blocker.
 - The CPU reference is not a performance target; it is the correctness
   reference for probabilities and argmax.

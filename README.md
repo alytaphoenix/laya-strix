@@ -39,6 +39,11 @@ ROCm `gfx1151`; Laya keeps the NPU busy and leaves the iGPU to that engine.
       `Actually running on NPU 1`.
 - [x] Training wrapper around the official `laya-train` loop, with a separate
       CPU/ROCm venv, run artifacts, and a llama-swap contention guard.
+- [x] Optional HTTPS/mTLS (`LAYA_TLS_*`) and bearer API keys
+      (`LAYA_API_KEY`/`LAYA_API_KEY_FILE`); `/npu/health` and `/metrics` are
+      protected alongside `/v1/systemone*`.  Setup:
+      `deploy/gen_tls.sh` + `deploy/gen_api_key.sh`; see
+      [`docs/tls-and-auth.md`](docs/tls-and-auth.md).
 - [x] Benchmarks: one question p50 `131.8 ms`, three questions p50
       `389.4 ms`; Jev parity 0 argmax changes / max dp `0.0065`; gufo decode
       regression under Laya load ~`4%`.  Details in `docs/benchmarks.md`.
@@ -47,7 +52,7 @@ The 421 M **English ModernBERT-large** BF16 graph does not fit the current
 XDNA2 AIE scheduler: it fails at fused layer 32 at L=512/256/128, with a
 14+14 layer split, and with the L3/spilling/optimisation knobs. Quark
 A8W8/A16W8 quantization was not accurate enough for Laya's calibrated
-answers. The deployed v0.1.0 encoder is therefore the 322 M
+answers. The deployed encoder is therefore the 322 M
 `laya-multilingual` checkpoint, fine-tuned for the English decisions; the
 English split/quantization experiments remain in the repo for a future
 compiler/driver.
@@ -180,9 +185,20 @@ FORSETI_LAYA_URL=http://127.0.0.1:8753 scripts/laya-eval.sh
   Point Forseti at `http://127.0.0.1:8751` (stop the Mac's local Laya or use a
   different tunnel port).
 
-- **LAN:** set `LAYA_HOST=0.0.0.0`, set `LAYA_API_KEY`, open only the LAN
-  interface in the firewall.  Clients send `Authorization: Bearer ...`.
-  `/health` liveness stays open by design; the detail keys need the token.
+- **LAN:** set `LAYA_HOST=0.0.0.0`, configure a bearer API key and TLS, and
+  open only the LAN interface in the firewall.  Clients send
+  `Authorization: Bearer ...`; `/health` liveness stays open by design with a
+  minimal payload, while `/v1/*`, `/npu/health` and `/metrics` require the
+  key.  Generate a local key/cert pair with:
+
+  ```bash
+  bash deploy/gen_api_key.sh deploy/api.key
+  bash deploy/gen_tls.sh valhalla
+  ```
+
+  See [`docs/tls-and-auth.md`](docs/tls-and-auth.md) for the env file, curl,
+  mTLS and reverse-proxy options.  For the public internet use a real CA and
+  a firewall; the generated CA is for a trusted LAN or SSH tunnel.
 
 ## Training
 
@@ -216,13 +232,17 @@ reports a loaded model.  See [`training/README.md`](training/README.md) and
   build, shapes, coexistence.
 - [`docs/jev-api.md`](docs/jev-api.md) — endpoints, request/response, auth,
   batch, strict mode.
+- [`docs/tls-and-auth.md`](docs/tls-and-auth.md) — API keys, TLS, mTLS,
+  certificate/key rotation and client examples.
 - [`docs/install-valhalla.md`](docs/install-valhalla.md) — XRT/Ryzen AI 1.8,
   Ubuntu 26.04 workarounds, compile, systemd.
 - [`docs/training.md`](docs/training.md) — training design and the route back
   to an NPU artifact.
 - [`docs/benchmarks.md`](docs/benchmarks.md) — methodology and measured
   numbers.
-- [`docs/release-0.1.0.md`](docs/release-0.1.0.md) — release notes,
+- [`docs/release-0.2.0.md`](docs/release-0.2.0.md) — access/hardening release
+  notes and validation.
+- [`docs/release-0.1.0.md`](docs/release-0.1.0.md) — initial release notes,
   validation table and artifacts.
 
 ## License

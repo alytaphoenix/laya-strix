@@ -13,9 +13,11 @@ and restored in a `finally` block.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 log = logging.getLogger("laya_strix.agent")
+_PATCH_LOCK = threading.Lock()
 
 
 def build_agent(model_dir: Path, session, *, calibration: str | None = None):
@@ -33,17 +35,18 @@ def build_agent(model_dir: Path, session, *, calibration: str | None = None):
         # session it would otherwise build; our fake ignores it either way.
         return ["CPUExecutionProvider"]
 
-    ort.InferenceSession = _fake_session
-    ort.get_available_providers = _fake_available
-    try:
-        agent = oa.ONNXAgent(
-            str(model_dir),
-            onnx_path=str(session.settings.encoder),
-            calibration=calibration,
-        )
-    finally:
-        ort.InferenceSession = real_session
-        ort.get_available_providers = real_available
+    with _PATCH_LOCK:
+        ort.InferenceSession = _fake_session
+        ort.get_available_providers = _fake_available
+        try:
+            agent = oa.ONNXAgent(
+                str(model_dir),
+                onnx_path=str(session.settings.encoder),
+                calibration=calibration,
+            )
+        finally:
+            ort.InferenceSession = real_session
+            ort.get_available_providers = real_available
 
     agent.session = session
     agent.npu_session = session

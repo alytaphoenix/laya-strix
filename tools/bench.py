@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import ssl
 import statistics
 import sys
 import time
@@ -47,20 +48,33 @@ DEFAULT_QUESTIONS = {
 }
 
 
-def _post(url: str, body: dict, timeout: float) -> float:
+def _headers(api_key: str | None) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = "Bearer " + api_key
+    return headers
+
+
+def _post(url: str, body: dict, timeout: float, api_key: str | None = None,
+          context: ssl.SSLContext | None = None) -> float:
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         url.rstrip("/") + "/v1/systemone", data=data,
-        headers={"Content-Type": "application/json"})
+        headers=_headers(api_key))
     t0 = time.perf_counter()
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
         resp.read()
     return (time.perf_counter() - t0) * 1000.0
 
 
-def _get(url: str, path: str, timeout: float = 3.0):
+def _get(url: str, path: str, timeout: float = 3.0,
+         api_key: str | None = None,
+         context: ssl.SSLContext | None = None):
     try:
-        with urllib.request.urlopen(url.rstrip("/") + path, timeout=timeout) as r:
+        req = urllib.request.Request(url.rstrip("/") + path,
+                                     headers=_headers(api_key))
+        with urllib.request.urlopen(req, timeout=timeout,
+                                    context=context) as r:
             return json.load(r)
     except Exception:
         return None
@@ -75,21 +89,36 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--state-file", default=None)
     ap.add_argument("--questions-file", default=None)
+    ap.add_argument("--api-key-file", default=None,
+                    help="Read a bearer key from this file (0600).")
+    ap.add_argument("--ca-cert", default=None,
+                    help="CA bundle for a self-signed HTTPS endpoint.")
+    ap.add_argument("--insecure", action="store_true",
+                    help="Disable TLS verification (testing only).")
     args = ap.parse_args(argv)
+
+    api_key = None
+    if args.api_key_file:
+        api_key = open(args.api_key_file, encoding="utf-8").read().strip()
+    context = None
+    if args.insecure:
+        context = ssl._create_unverified_context()
+    elif args.ca_cert:
+        context = ssl.create_default_context(cafile=args.ca_cert)
 
     state = open(args.state_file).read() if args.state_file else DEFAULT_STATE
     questions = (json.load(open(args.questions_file))
                  if args.questions_file else DEFAULT_QUESTIONS)
     body = {"state": state, "questions": questions}
 
-    before = _get(args.url, "/npu/health")
+    before = _get(args.url, "/npu/health", api_key=api_key, context=context)
     print("target: %s" % args.url)
     if before:
         print("backend: %s  provider: %s" % (before.get("backend"), before.get("provider")))
         print("shape: seq=%s markers=%s" % (before.get("seq_len"), before.get("markers")))
 
     for _ in range(args.warmup):
-        _post(args.url, body, args.timeout)
+        _post(args.url, body, args.timeout, api_key, context)
 
     times = []
     errors = 0
@@ -97,13 +126,15 @@ def main(argv=None):
     if args.concurrency <= 1:
         for _ in range(args.requests):
             try:
-                times.append(_post(args.url, body, args.timeout))
+                times.append(_post(args.url, body, args.timeout,
+                                    api_key, context))
             except Exception as exc:
                 errors += 1
                 print("error:", exc, file=sys.stderr)
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-            futures = [pool.submit(_post, args.url, body, args.timeout)
+            futures = [pool.submit(_post, args.url, body, args.timeout,
+                                   api_key, context)
                        for _ in range(args.requests)]
             for f in futures:
                 try:
@@ -124,7 +155,7 @@ def main(argv=None):
         print("throughput: %.1f req/s (concurrency %d)" %
               (len(times) / wall if wall else 0.0, args.concurrency))
 
-    after = _get(args.url, "/npu/health")
+    after = _get(args.url, "/npu/health", api_key=api_key, context=context)
     if after:
         s = after.get("stats", {})
         print("\nservice stats: runs=%s rows=%s tokens=%s padding_ratio=%s" %

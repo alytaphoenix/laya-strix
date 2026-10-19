@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.0 — 2026-10-19
+
+### Added
+
+- **HTTPS/TLS** terminated by uvicorn: `LAYA_TLS_CERT`, `LAYA_TLS_KEY`, and
+  optional `LAYA_TLS_CA` + `LAYA_TLS_CLIENT_AUTH=1` for mutual TLS.  CLI
+  equivalents: `--tls-cert`, `--tls-key`, `--tls-ca`, `--tls-client-auth`.
+- **API-key setup**: `LAYA_API_KEY_FILE` (preferred) or `LAYA_API_KEY`, with
+  `--api-key-file` for the CLI.  `/npu/health` and `/metrics` now use the
+  same constant-time bearer check as upstream `/v1/systemone*`; `/health`
+  stays a minimal open liveness response.
+- `deploy/gen_api_key.sh` and `deploy/gen_tls.sh` (local CA, server cert and
+  client cert for mTLS); `deploy/tls/` and `deploy/api.key` are gitignored.
+- `docs/tls-and-auth.md` with LAN/mTLS/reverse-proxy setup, curl/Python
+  examples, key rotation and file permissions.
+- Tests for the bearer dependency, key-file precedence, TLS validation and
+  the no-secret-leak `describe()` path.
+- `UMask=0077` in the systemd unit.
+
+### Hardening
+
+- API-key and TLS private-key files must be non-empty regular files and, on
+  POSIX, not group/world readable (`chmod 600`); startup fails closed
+  otherwise.
+- Empty/oversized/mismatched request rows, marker positions outside the
+  compiled sequence, and zero/negative profile settings are rejected with a
+  clear error instead of reaching ORT.
+- FastAPI `/docs`, `/redoc` and `/openapi.json` are disabled by default
+  (`LAYA_ENABLE_DOCS=1` opts in).
+- `tools/bench.py` and `tools/parity.py` support bearer keys, a custom CA and
+  (for parity) separate keys per endpoint.
+- `laya-npu verify` checks config, model paths, secret permissions, TLS and
+  provider availability without opening a second NPU context.
+- The training wrapper now actually applies its ROCm allocator/HSA environment
+  to the in-process trainer.
+- `gen_tls.sh` validates the host name and refuses malformed SAN input.
+
+### Changed
+
+- `laya-npu serve` host/port defaults now fall back to `LAYA_HOST`/`LAYA_PORT`
+  instead of always forcing `127.0.0.1:8751`.
+- The release version is 0.2.0.
+
 ## 0.1.0 — 2026-10-18
 
 First release of the Laya-on-XDNA2 deployment.

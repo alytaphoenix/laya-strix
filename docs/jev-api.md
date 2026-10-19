@@ -102,11 +102,18 @@ runs one row per forward in v0.1.
 ## Auth and access
 
 - Loopback default: `127.0.0.1:8751`; use an SSH tunnel from another host.
-- LAN: set `LAYA_HOST=0.0.0.0` and `LAYA_API_KEY`; clients send
-  `Authorization: Bearer <key>`.  `/health` liveness stays open; detailed
-  health/checkpoint data requires the key.
-- No TLS is terminated by the service; put it behind a tunnel or reverse proxy
-  for anything beyond a trusted LAN.
+- LAN: set `LAYA_HOST=0.0.0.0` and configure `LAYA_API_KEY` or
+  `LAYA_API_KEY_FILE`; clients send `Authorization: Bearer <key>`.
+  `/v1/systemone*`, `/npu/health` and `/metrics` return `401` without it.
+  `/health` remains a minimal open liveness response
+  (`{"status":"ok"}`); the full health/checkpoint payload needs the key.
+- TLS is terminated by uvicorn: set `LAYA_TLS_CERT`/`LAYA_TLS_KEY`, optionally
+  `LAYA_TLS_CA` with `LAYA_TLS_CLIENT_AUTH=1` for mTLS.  Generate local
+  certificates with `bash deploy/gen_tls.sh <host>`; for the public internet
+  use a real CA or a TLS-terminating reverse proxy.
+- API key rotation requires a service restart; the key is never logged.  See
+  [`tls-and-auth.md`](tls-and-auth.md) for the full setup, curl/Python
+  examples and key-file permissions.
 
 ## Strict Jev mode
 

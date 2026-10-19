@@ -25,17 +25,6 @@ from .config import Settings
 log = logging.getLogger("laya_strix.session")
 
 
-def _np_dtype(ort_type: str):
-    return {
-        "tensor(int64)": np.int64,
-        "tensor(int32)": np.int32,
-        "tensor(bool)": np.bool_,
-        "tensor(float)": np.float32,
-        "tensor(float16)": np.float16,
-        "tensor(bfloat16)": np.float32,
-    }[ort_type]
-
-
 @dataclass
 class Stats:
     runs: int = 0
@@ -184,7 +173,7 @@ class SplitSession:
         M = self.settings.markers
         n = min(int(att.sum()), L)
         if n <= 0:
-            n = 1
+            raise ValueError("empty row: attention_mask has no active tokens")
 
         x_ids = np.full((1, L), self.settings.pad_id, dtype=np.int64)
         x_att = np.zeros((1, L), dtype=np.int64)
@@ -195,8 +184,15 @@ class SplitSession:
         x_ids[0, :n] = ids[:n]
         x_att[0, :n] = 1
         m = min(mpos.shape[0], M)
+        active = np.asarray(mmask[:m], dtype=bool)
+        if active.any():
+            positions = np.asarray(mpos[:m])[active]
+            if positions.min() < 0 or positions.max() >= L:
+                raise ValueError(
+                    "marker position outside the compiled sequence: %s" %
+                    (positions.tolist(),))
         x_mpos[0, :m] = mpos[:m]
-        x_mmask[0, :m] = mmask[:m]
+        x_mmask[0, :m] = active
         x_qtype[0] = int(qtype)
 
         t0 = time.perf_counter()
@@ -225,12 +221,35 @@ class SplitSession:
         mmask = np.asarray(feeds["marker_mask"])
         qtype = np.asarray(feeds["qtype"])
 
+        if ids.ndim != 2 or att.ndim != 2:
+            raise ValueError("input_ids and attention_mask must be 2-D")
+        if ids.shape != att.shape:
+            raise ValueError("input_ids and attention_mask shapes differ")
         rows = ids.shape[0]
+        if rows == 0:
+            raise ValueError("empty batch")
+
+        if mpos.ndim == 1:
+            mpos = mpos[None, :]
+        if mmask.ndim == 1:
+            mmask = mmask[None, :]
+        if mpos.ndim != 2 or mmask.ndim != 2:
+            raise ValueError("marker_pos and marker_mask must be 2-D")
+        if mpos.shape != mmask.shape:
+            raise ValueError("marker_pos and marker_mask shapes differ")
+        if mpos.shape[0] != rows:
+            raise ValueError("marker rows do not match input rows")
         if mpos.shape[1] > self.settings.markers:
             raise ValueError(
                 "request has %d markers, compiled profile has %d; "
                 "increase LAYA_MARKERS and recompile" %
                 (mpos.shape[1], self.settings.markers))
+
+        qtype = qtype.reshape(-1)
+        if qtype.size == 1 and rows > 1:
+            qtype = np.repeat(qtype, rows)
+        if qtype.size != rows:
+            raise ValueError("qtype rows do not match input rows")
 
         out_logits = []
         out_act = []

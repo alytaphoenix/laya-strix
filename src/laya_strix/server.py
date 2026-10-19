@@ -7,6 +7,7 @@ import os
 import time
 
 from .agent import build_agent
+from .auth import make_api_key_dependency
 from .config import Settings
 from .session import SplitSession
 
@@ -16,11 +17,13 @@ log = logging.getLogger("laya_strix.server")
 def build_app(settings: Settings | None = None, *, calibration: str | None = None):
     """Return (FastAPI app, SplitSession).  Kept separate for tests."""
     settings = settings or Settings.from_env()
+    settings.validate()
 
     # The Router may otherwise probe torch devices (MPS on a Mac) even though
     # the agent is ONNX-only.  Pin it before importing laya.
     os.environ.setdefault("LAYA_DEVICE", "cpu")
 
+    from fastapi import Depends
     from laya import Router
     from laya.serve import create_app
 
@@ -32,6 +35,10 @@ def build_app(settings: Settings | None = None, *, calibration: str | None = Non
                 "laya-npu serves the attached checkpoint(s) only; %r is not attached. "
                 "Compile and attach it before enabling that traffic." % key)
 
+    # Resolve a file-backed bearer key before laya.serve.create_app reads the
+    # environment, and reuse it for the extension endpoints below.
+    api_key = settings.apply_api_key()
+
     session = SplitSession(settings)
     agent = build_agent(settings.model_dir, session, calibration=calibration)
 
@@ -40,6 +47,16 @@ def build_app(settings: Settings | None = None, *, calibration: str | None = Non
     for name in names:
         router.attach(name, agent)
     app = create_app(router)
+    if not settings.enable_docs:
+        # FastAPI installs /docs, /redoc and /openapi.json at construction.
+        # They expose the schema but not data; keep the public surface minimal
+        # unless the operator opts in with LAYA_ENABLE_DOCS=1.
+        hidden = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
+        app.router.routes = [
+            r for r in app.router.routes
+            if getattr(r, "path", None) not in hidden
+        ]
+    auth_dependency = make_api_key_dependency(api_key)
 
     counts = {"requests": 0, "errors": 0, "started": time.time()}
     started = time.monotonic()
@@ -58,7 +75,7 @@ def build_app(settings: Settings | None = None, *, calibration: str | None = Non
             counts["errors"] += 1
         return response
 
-    @app.get("/npu/health")
+    @app.get("/npu/health", dependencies=[Depends(auth_dependency)])
     def npu_health():
         body = session.describe()
         body.update({
@@ -69,7 +86,7 @@ def build_app(settings: Settings | None = None, *, calibration: str | None = Non
         })
         return body
 
-    @app.get("/metrics")
+    @app.get("/metrics", dependencies=[Depends(auth_dependency)])
     def metrics():
         s = session.stats
         lines = [
@@ -99,14 +116,47 @@ def build_app(settings: Settings | None = None, *, calibration: str | None = Non
     return app, session
 
 
-def run(host: str | None = None, port: int | None = None) -> None:
+def run(host: str | None = None, port: int | None = None, *,
+        tls_cert: str | None = None, tls_key: str | None = None,
+        tls_ca: str | None = None, tls_client_auth: bool | None = None,
+        api_key_file: str | None = None) -> None:
+    import dataclasses
+    import ssl
+    from pathlib import Path
+
     import uvicorn
 
     settings = Settings.from_env()
+    overrides = {}
+    if tls_cert:
+        overrides["tls_cert"] = Path(tls_cert)
+    if tls_key:
+        overrides["tls_key"] = Path(tls_key)
+    if tls_ca:
+        overrides["tls_ca"] = Path(tls_ca)
+    if tls_client_auth is not None:
+        overrides["tls_client_auth"] = tls_client_auth
+    if api_key_file:
+        overrides["api_key_file"] = Path(api_key_file)
+    if overrides:
+        settings = dataclasses.replace(settings, **overrides)
+    settings.validate_tls()
+
     app, session = build_app(settings)
-    host = host or settings.host
-    port = int(port or settings.port)
-    log.info("serving Jev /v1/systemone on %s:%d (%s)", host, port,
+    host = settings.host if host is None else host
+    port = settings.port if port is None else int(port)
+
+    ssl_kwargs = {}
+    if settings.tls_enabled:
+        ssl_kwargs["ssl_certfile"] = str(settings.tls_cert)
+        ssl_kwargs["ssl_keyfile"] = str(settings.tls_key)
+        ssl_kwargs["ssl_version"] = ssl.PROTOCOL_TLS_SERVER
+        if settings.tls_client_auth:
+            ssl_kwargs["ssl_ca_certs"] = str(settings.tls_ca)
+            ssl_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
+    scheme = "https" if settings.tls_enabled else "http"
+    log.info("serving Jev /v1/systemone on %s://%s:%d (%s)", scheme, host, port,
              session.describe()["backend"])
     uvicorn.run(app, host=host, port=port,
-                log_level=os.environ.get("LAYA_LOG_LEVEL", "info"))
+                log_level=os.environ.get("LAYA_LOG_LEVEL", "info"),
+                **ssl_kwargs)

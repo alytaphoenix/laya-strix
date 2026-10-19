@@ -32,7 +32,7 @@ accept ONNX sequence types.  The build therefore traces two graphs:
 - `head.onnx`: Laya's two-layer decision head and typed-answer heads.  It is
   ~60 MB and runs on the CPU; it is not the inference bottleneck.
 
-The deployed v0.1.0 encoder is the **322 M multilingual `mmBERT-base`**
+The deployed encoder is the **322 M multilingual `mmBERT-base`**
 checkpoint, fine-tuned on the English triage decisions.  The 421 M English
 ModernBERT-large BF16 graph does not fit the current XDNA2 AIE scheduler: it
 fails at fused layer 32 at `L=512`, 256 and 128, with a 14+14 layer split,

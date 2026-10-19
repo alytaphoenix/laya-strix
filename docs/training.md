@@ -28,7 +28,7 @@ bash training/run_example_cpu.sh           # 8 rows, frozen encoder, one epoch
 Output: `artifacts/training/example-cpu/` with a checkpoint that loads with
 `laya.load(...)`.
 
-## v0.1.0 checkpoint (Forseti triage)
+## Deployed checkpoint (Forseti triage)
 
 The deployed encoder is a two-stage CPU fine-tune of
 `convaiinnovations/laya-multilingual` (322 M mmBERT-base):

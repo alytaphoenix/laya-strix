@@ -75,7 +75,7 @@ stray PyPI `onnxruntime` would replace AMD's build.
 
 ## 4. Build the deployed checkpoint
 
-v0.1.0 serves a **fine-tuned 322 M multilingual Laya encoder** (`mmBERT-base`)
+0.2.0 serves a **fine-tuned 322 M multilingual Laya encoder** (`mmBERT-base`)
 at a 256-token profile.  The 421 M English ModernBERT-large BF16 graph does
 not fit the current XDNA2 AIE scheduler: it fails at fused layer 32
 (`Auto-phase failed ... hardware resources constraint`) at L=512, 256 and 128,
@@ -107,7 +107,7 @@ bash deploy/train_laya.sh --device cpu \
   --max-len 256 --head-max-len 256
 ```
 
-`multilingual-triage4` is the v0.1.0 checkpoint.  Run the CPU gate:
+`multilingual-triage4` is the deployed checkpoint.  Run the CPU gate:
 
 ```bash
 # start a CPU service from the exported ONNX (below), or use laya.load()
@@ -153,23 +153,48 @@ The English split/quantization experiments remain in the repo for a future
 compiler/driver: `deploy/compile_layers.sh` (14+14 layers; fails at layer 32),
 `deploy/vai_ep_config_l1.json` / `_l3.json` / `_l3b.json` (optimisation,
 1 GB L3 and spilling variants; all fail), and `tools/quantize_a8w8.py`
-(accuracy not acceptable).  They are not the v0.1.0 deployment path.
+(accuracy not acceptable).  They are not the 0.2.0 deployment path.
 
 ## 5. Run the service
 
 ```bash
 cp deploy/laya-npu.env.example deploy/laya-npu.env
+chmod 600 deploy/laya-npu.env
 # edit paths if the repo is not ~/laya-strix
 sudo cp deploy/laya-npu.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now laya-npu
 systemctl status laya-npu --no-pager
+
+# preflight in the same environment as the service; it does not open the NPU
+source /opt/xilinx/xrt/setup.sh
+source ~/ryzenai_1_8/venv/bin/activate
+source deploy/valhalla.env
+set -a; . deploy/laya-npu.env; set +a
+laya-npu verify
+
 curl -s http://127.0.0.1:8751/health
 curl -s http://127.0.0.1:8751/npu/health
 ```
 
-Default bind is loopback.  For LAN access set `LAYA_HOST=0.0.0.0` and
-`LAYA_API_KEY`, and open only the LAN interface in the firewall.
+Default bind is loopback and no key/TLS is configured.  For LAN access:
+
+```bash
+bash deploy/gen_api_key.sh deploy/api.key
+bash deploy/gen_tls.sh valhalla
+# in deploy/laya-npu.env:
+#   LAYA_HOST=0.0.0.0
+#   LAYA_API_KEY_FILE=/home/alyta/laya-strix/deploy/api.key
+#   LAYA_TLS_CERT=/home/alyta/laya-strix/deploy/tls/server.crt
+#   LAYA_TLS_KEY=/home/alyta/laya-strix/deploy/tls/server.key
+#   LAYA_TLS_CA=/home/alyta/laya-strix/deploy/tls/ca.crt
+chmod 600 deploy/laya-npu.env deploy/api.key deploy/tls/*.key
+sudo systemctl restart laya-npu
+```
+
+Open only the LAN interface in the firewall.  See
+[`tls-and-auth.md`](tls-and-auth.md) for mTLS, clients, rotation and the
+reverse-proxy alternative.
 
 ## Troubleshooting
 

@@ -9,3 +9,6 @@ models/
 *.execstack.bak
 .DS_Store
 deploy/laya-npu.env
+deploy/tls/
+deploy/api.key
+quantized_info.csv

@@ -7,7 +7,10 @@ Wants=network-online.target
 Type=simple
 User=alyta
 Group=alyta
+UMask=0077
 WorkingDirectory=/home/alyta/laya-strix
+# The env file is read by systemd as root; keep it 0600.  It may point at
+# LAYA_API_KEY_FILE and the TLS key/cert paths instead of holding secrets.
 EnvironmentFile=/home/alyta/laya-strix/deploy/laya-npu.env
 ExecStart=/home/alyta/laya-strix/deploy/run-laya-npu.sh
 Restart=always
