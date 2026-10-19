@@ -30,6 +30,9 @@ def verify_config(settings: Settings | None = None) -> int:
                                   "ok" if settings.encoder.is_file() else "missing"))
     print("head:      %s (%s)" % (settings.head,
                                   "ok" if settings.head.is_file() else "missing"))
+    if settings.encoder_b is not None:
+        print("encoder B: %s (%s)" % (settings.encoder_b,
+                                      "ok" if settings.encoder_b.is_file() else "missing"))
     print("seq_len:   %d  markers: %d" % (settings.seq_len, settings.markers))
     print("attach:    %s" % ",".join(settings.attach))
     print("api key:   %s" % ("configured" if key else "not configured"))
@@ -44,6 +47,8 @@ def verify_config(settings: Settings | None = None) -> int:
         failures.append("encoder missing")
     if not settings.head.is_file():
         failures.append("head missing")
+    if settings.encoder_b is not None and not settings.encoder_b.is_file():
+        failures.append("encoder B missing")
 
     try:
         import onnxruntime as ort

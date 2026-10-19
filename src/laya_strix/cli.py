@@ -1,4 +1,4 @@
-"""Command line entry point (serve/build/verify/bench land here)."""
+"""Command line entry point: serve, verify and train."""
 
 from __future__ import annotations
 
@@ -46,8 +46,27 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "verify":
+        import dataclasses
+        from pathlib import Path
+
+        from .config import Settings
         from .verify import verify_config
-        return verify_config()
+
+        settings = Settings.from_env()
+        overrides = {}
+        if args.tls_cert:
+            overrides["tls_cert"] = Path(args.tls_cert)
+        if args.tls_key:
+            overrides["tls_key"] = Path(args.tls_key)
+        if args.tls_ca:
+            overrides["tls_ca"] = Path(args.tls_ca)
+        if args.tls_client_auth is not None:
+            overrides["tls_client_auth"] = args.tls_client_auth
+        if args.api_key_file:
+            overrides["api_key_file"] = Path(args.api_key_file)
+        if overrides:
+            settings = dataclasses.replace(settings, **overrides)
+        return verify_config(settings)
 
     ap.error("command not implemented yet: %s" % args.command)
     return 2

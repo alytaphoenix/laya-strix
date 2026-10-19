@@ -36,6 +36,8 @@
 - The training wrapper now actually applies its ROCm allocator/HSA environment
   to the in-process trainer.
 - `gen_tls.sh` validates the host name and refuses malformed SAN input.
+- `laya-npu verify` honors CLI TLS/API-key overrides and checks encoder B;
+  `build_app` validates TLS paths, and request counters use a lock.
 
 ### Changed
 

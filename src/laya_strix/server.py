@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 
 from .agent import build_agent
@@ -18,6 +19,7 @@ def build_app(settings: Settings | None = None, *, calibration: str | None = Non
     """Return (FastAPI app, SplitSession).  Kept separate for tests."""
     settings = settings or Settings.from_env()
     settings.validate()
+    settings.validate_tls()
 
     # The Router may otherwise probe torch devices (MPS on a Mac) even though
     # the agent is ONNX-only.  Pin it before importing laya.
@@ -59,43 +61,53 @@ def build_app(settings: Settings | None = None, *, calibration: str | None = Non
     auth_dependency = make_api_key_dependency(api_key)
 
     counts = {"requests": 0, "errors": 0, "started": time.time()}
+    counts_lock = threading.Lock()
     started = time.monotonic()
 
     @app.middleware("http")
     async def _count(request, call_next):
         path = request.url.path
         if path.startswith("/v1/systemone"):
-            counts["requests"] += 1
+            with counts_lock:
+                counts["requests"] += 1
         try:
             response = await call_next(request)
         except Exception:
-            counts["errors"] += 1
+            with counts_lock:
+                counts["errors"] += 1
             raise
         if response.status_code >= 500:
-            counts["errors"] += 1
+            with counts_lock:
+                counts["errors"] += 1
         return response
 
     @app.get("/npu/health", dependencies=[Depends(auth_dependency)])
     def npu_health():
         body = session.describe()
+        with counts_lock:
+            requests = counts["requests"]
+            errors = counts["errors"]
         body.update({
             "status": "ok",
             "uptime_s": round(time.monotonic() - started, 1),
-            "requests": counts["requests"],
-            "errors": counts["errors"],
+            "requests": requests,
+            "errors": errors,
         })
         return body
 
     @app.get("/metrics", dependencies=[Depends(auth_dependency)])
     def metrics():
         s = session.stats
+        with counts_lock:
+            requests = counts["requests"]
+            errors = counts["errors"]
         lines = [
             "# HELP laya_npu_requests_total Jev decision requests seen.",
             "# TYPE laya_npu_requests_total counter",
-            "laya_npu_requests_total %d" % counts["requests"],
+            "laya_npu_requests_total %d" % requests,
             "# HELP laya_npu_errors_total Requests that failed or returned 5xx.",
             "# TYPE laya_npu_errors_total counter",
-            "laya_npu_errors_total %d" % counts["errors"],
+            "laya_npu_errors_total %d" % errors,
             "# HELP laya_npu_rows_total Question rows evaluated.",
             "# TYPE laya_npu_rows_total counter",
             "laya_npu_rows_total %d" % s.rows,
